@@ -3,7 +3,9 @@ name = "robot"
 version = "0.1.0"
 description = "Office robot assistant"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "python-dotenv>=1.0.0",
+]
 
 [dependency-groups]
 dev = [
