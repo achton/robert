@@ -29,6 +29,8 @@ EXPRESSIONS_DIR = ASSETS_DIR / "expressions"
 
 # Map expression names to image filenames (without extension).
 # Matches the naming from robotv2.
+# TODO: sad, scared, and surprised reuse other faces because we only
+# have 4 PNGs. Add dedicated assets when available.
 EXPRESSION_MAP: dict[str, str] = {
     "neutral": "face-smiling",
     "smiling": "face-smiling",
@@ -126,7 +128,7 @@ class GUIService(BaseService):
 
         # Start the pygame worker thread, passing the async event loop
         # so the thread can schedule events back onto it
-        main_loop = asyncio.get_event_loop()
+        main_loop = asyncio.get_running_loop()
         self._gui_thread = threading.Thread(
             target=self._pygame_worker,
             args=(main_loop,),
@@ -158,10 +160,9 @@ class GUIService(BaseService):
             self._clock = pygame.time.Clock()
 
             # Open framebuffer for Pi headless rendering.
-            # We keep this handle open for the lifetime of the worker
-            # thread (seeking to 0 each frame) for performance.
             if self._use_framebuffer:
                 try:
+                    # Kept open for seek+write each frame; closed in finally.
                     self._fb = open("/dev/fb0", "wb")  # noqa: SIM115
                 except OSError as err:
                     self.logger.error(f"Cannot open /dev/fb0: {err}")
