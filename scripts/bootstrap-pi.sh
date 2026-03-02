@@ -87,6 +87,9 @@ sudo apt-get install -q -y --no-install-recommends \
 sudo loginctl enable-linger pi
 
 # --- Echo cancellation config ---
+# NOTE: The capture/playback node names below are hardware-specific.
+# If you swap the mic or speaker, update these to match.
+# Find current node names with:  pw-cli list-objects | grep node.name
 echo ""
 echo "--- Configuring echo cancellation ---"
 mkdir -p "$HOME/.config/pipewire/pipewire.conf.d"
@@ -95,6 +98,10 @@ cat > "$HOME/.config/pipewire/pipewire.conf.d/echo-cancel.conf" << 'AECCONF'
 # Creates a virtual source (echo-cancelled mic) and a virtual sink
 # (monitored speaker output) that PipeWire uses to subtract speaker
 # audio from the microphone input.
+#
+# The capture/playback node names are hardware-specific. If you replace
+# the microphone or speaker, update them to match the new device names.
+# List available nodes with:  pw-cli list-objects | grep node.name
 context.modules = [
     {
         name = libpipewire-module-echo-cancel
