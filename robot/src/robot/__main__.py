@@ -9,8 +9,9 @@ import asyncio
 import sys
 from typing import Any
 
+from robot.audio_service import AudioService
 from robot.base_service import BaseService
-from robot.config import GUIConfig, is_raspberry_pi
+from robot.config import AudioConfig, GUIConfig, is_raspberry_pi
 from robot.event_bus import EventBus
 from robot.gui_service import GUIService
 from robot.hardware import detect_display
@@ -32,8 +33,11 @@ class Robot:
     def __init__(self) -> None:
         self.logger = get_logger("Robot")
         self.event_bus = EventBus()
+        self._run_task: asyncio.Task[None] | None = None
+        self._shutdown_done = False
         self.services: list[BaseService] = [
             GUIService(self.event_bus, GUIConfig()),
+            AudioService(self.event_bus, AudioConfig()),
         ]
 
     async def initialize(self) -> None:
@@ -84,18 +88,27 @@ class Robot:
 
         self.logger.info(f"Starting {len(enabled)} service(s)...")
 
-        # Subscribe to quit event
-        self.event_bus.subscribe("quit", self._handle_quit)
+        # Subscribe to quit event (published by GUIService on ESC / window close)
+        self.event_bus.subscribe("gui.quit", self._handle_quit)
+
+        # Wrap the gather in a task so _handle_quit can cancel it
+        self._run_task = asyncio.current_task()
 
         try:
             await asyncio.gather(*[service.run() for service in enabled])
+        except asyncio.CancelledError:
+            self.logger.info("Services cancelled")
         except Exception as e:
             self.logger.error(f"Service error: {e}")
         finally:
             self.logger.info("Services stopped")
 
     async def shutdown(self) -> None:
-        """Gracefully shutdown all services."""
+        """Gracefully shutdown all services. Safe to call multiple times."""
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+
         self.logger.info("Shutting down...")
 
         for service in self.services:
@@ -108,10 +121,12 @@ class Robot:
         self.logger.info("Shutdown complete")
 
     async def _handle_quit(self, _data: Any) -> None:
-        """Handle quit event — signal all services to stop."""
-        self.logger.info("Quit event received")
-        for service in self.services:
-            service.running = False
+        """Handle gui.quit — shut down all services and cancel the run loop."""
+        self.logger.info("Quit event received, shutting down...")
+        await self.shutdown()
+        # Cancel the run() task so asyncio.gather() exits
+        if self._run_task:
+            self._run_task.cancel()
 
 
 async def main() -> None:
