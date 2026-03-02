@@ -1,0 +1,153 @@
+version: '3'
+
+vars:
+  UV: uv
+  # Raspberry Pi deployment
+  PI_HOST: roberta
+  PI_APP_DIR: /home/pi/robot
+
+tasks:
+  # === PRIMARY TASKS ===
+  default:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
+
+  run:
+    desc: "Run the robot application"
+    dir: robot
+    cmds:
+      - "{{.UV}} run python -m robot"
+
+  check:
+    desc: "Run all quality gates (format, lint, typecheck, tests)"
+    cmds:
+      - task: check:format
+      - task: check:lint
+      - task: check:typecheck
+      - task: check:test
+
+  fix:
+    desc: "Auto-fix formatting and lint issues"
+    cmds:
+      - task: fix:format
+      - task: fix:lint
+
+  reset:
+    desc: "Clean all artifacts and reinstall from scratch"
+    cmds:
+      - task: reset:clean
+      - task: reset:setup
+
+  # === CHECK TASKS ===
+  check:format:
+    desc: "Check Python code formatting"
+    dir: robot
+    cmds:
+      - "{{.UV}} run black --check ."
+
+  check:lint:
+    desc: "Lint Python code with Ruff"
+    dir: robot
+    cmds:
+      - "{{.UV}} run ruff check ."
+
+  check:typecheck:
+    desc: "Type check Python code with mypy"
+    dir: robot
+    cmds:
+      - "{{.UV}} run mypy src"
+
+  check:test:
+    desc: "Run unit tests with pytest"
+    dir: robot
+    cmds:
+      - "{{.UV}} run pytest -q"
+
+  check:test:verbose:
+    desc: "Run unit tests with verbose output"
+    dir: robot
+    cmds:
+      - "{{.UV}} run pytest -v"
+
+  check:test:coverage:
+    desc: "Run unit tests with coverage report"
+    dir: robot
+    cmds:
+      - "{{.UV}} run pytest --cov=src --cov-report=term-missing"
+
+  # === FIX TASKS ===
+  fix:format:
+    desc: "Format Python code with Black"
+    dir: robot
+    cmds:
+      - "{{.UV}} run black ."
+
+  fix:lint:
+    desc: "Fix Python lint issues with Ruff"
+    dir: robot
+    cmds:
+      - "{{.UV}} run ruff check --fix ."
+
+  # === RESET TASKS ===
+  reset:clean:
+    desc: "Clean all build artifacts, caches, and virtual environment"
+    dir: robot
+    cmds:
+      - rm -rf .venv .ruff_cache .mypy_cache .pytest_cache
+      - find . -type d -name "__pycache__" -exec rm -rf {} + || true
+      - find . -type f -name "*.pyc" -delete || true
+      - echo "Cleaned all artifacts and caches"
+
+  reset:setup:
+    desc: "Sync dependencies from scratch"
+    dir: robot
+    cmds:
+      - "{{.UV}} sync"
+
+  # === PI TASKS ===
+  pi:deploy:
+    desc: "Deploy robot/ to the Raspberry Pi"
+    cmds:
+      - task: pi:sync
+      - task: pi:install
+
+  pi:sync:
+    desc: "Sync robot/ code to the Pi via rsync"
+    cmds:
+      - >-
+        rsync -avz --delete
+        --exclude '.venv'
+        --exclude '.mypy_cache'
+        --exclude '.ruff_cache'
+        --exclude '.pytest_cache'
+        --exclude '__pycache__'
+        --exclude '.coverage'
+        --exclude '.env'
+        robot/ {{.PI_HOST}}:{{.PI_APP_DIR}}/
+
+  pi:install:
+    desc: "Install dependencies on the Pi"
+    cmds:
+      - >-
+        ssh {{.PI_HOST}} 'export PATH="$HOME/.local/bin:$PATH"
+        && cd {{.PI_APP_DIR}}
+        && uv sync --no-group dev'
+
+  pi:bootstrap:
+    desc: "First-time Pi setup: system packages, uv, audio, overlays"
+    cmds:
+      - echo "Bootstrapping {{.PI_HOST}}..."
+      - scp scripts/bootstrap-pi.sh {{.PI_HOST}}:/tmp/bootstrap-pi.sh
+      - ssh {{.PI_HOST}} 'chmod +x /tmp/bootstrap-pi.sh && /tmp/bootstrap-pi.sh'
+      - echo "Bootstrap complete. Run 'task pi:deploy' to sync and install."
+
+  pi:run:
+    desc: "Run the robot application on the Pi"
+    cmds:
+      - ssh -t {{.PI_HOST}} 'cd {{.PI_APP_DIR}} && .venv/bin/python -m robot'
+
+  pi:logs:
+    desc: "Follow the robot application logs on the Pi"
+    cmds:
+      - ssh -t {{.PI_HOST}} 'journalctl --user -u robot -f 2>/dev/null || echo "No systemd service yet. Use pi:run instead."'
