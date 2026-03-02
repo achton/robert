@@ -185,6 +185,8 @@ class AudioService(BaseService):
 
             if not self._mic_queue.full():
                 self._mic_queue.put_nowait(pcm_bytes)
+            else:
+                self.logger.debug("Mic queue full, dropping chunk")
 
         def output_callback(
             outdata: np.ndarray,
