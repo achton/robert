@@ -66,10 +66,11 @@ class GUIService(BaseService):
         super().__init__(event_bus)
         self.config = config or GUIConfig()
 
-        # Expression state
+        # Expression state — shared between the async event handler
+        # (writer) and the pygame thread (reader). Always access
+        # current_expression and _needs_redraw under _state_lock.
+        self._state_lock = threading.Lock()
         self.current_expression = self.config.default_expression
-
-        # Threading control
         self._gui_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
@@ -92,7 +93,8 @@ class GUIService(BaseService):
         self._is_blinking = False
         self._blink_end_ms = 0
 
-        # Dirty flag — only redraw when something changed
+        # Dirty flag — only redraw when something changed.
+        # Protected by _state_lock (see above).
         self._needs_redraw = True
 
     async def initialize(self) -> None:
@@ -207,10 +209,15 @@ class GUIService(BaseService):
                 # Handle auto-blink (may set _needs_redraw)
                 self._update_blink(pygame)
 
-                # Only render when something changed
-                if self._needs_redraw:
-                    self._render(pygame)
+                # Snapshot and reset the dirty flag. The lock
+                # protects against the async event handler writing
+                # current_expression + _needs_redraw concurrently.
+                with self._state_lock:
+                    needs_redraw = self._needs_redraw
                     self._needs_redraw = False
+
+                if needs_redraw:
+                    self._render(pygame)
 
                 # Sleep until next check. During a blink we poll at
                 # the configured FPS for a smooth transition; otherwise
@@ -261,7 +268,9 @@ class GUIService(BaseService):
             return
 
         # Only blink when showing a neutral expression
-        if self.current_expression != "neutral":
+        with self._state_lock:
+            expression = self.current_expression
+        if expression != "neutral":
             self._last_blink_ms = now
             return
 
@@ -282,7 +291,8 @@ class GUIService(BaseService):
         if self._is_blinking:
             display_expression = "closed"
         else:
-            display_expression = self.current_expression
+            with self._state_lock:
+                display_expression = self.current_expression
 
         # Look up the image filename for this expression
         filename = EXPRESSION_MAP.get(display_expression)
@@ -337,8 +347,9 @@ class GUIService(BaseService):
             self.logger.warning(f"Unknown expression: {expression}")
             return
 
-        self.current_expression = expression
-        self._needs_redraw = True
+        with self._state_lock:
+            self.current_expression = expression
+            self._needs_redraw = True
         self.logger.info(f"Expression set to: {expression}")
 
     async def shutdown(self) -> None:
