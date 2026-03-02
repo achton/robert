@@ -73,9 +73,9 @@ Show something on the 7" touchscreen. On Pi: dummy SDL driver with
 framebuffer blit (see `docs/display-rendering-research.md`). On laptop:
 normal pygame window.
 
-- [ ] GUIService with platform-aware rendering
-- [ ] Basic face/expression rendering (static images or simple shapes)
-- [ ] Touch input handling
+- [x] GUIService with platform-aware rendering
+- [x] Basic face/expression rendering (static images or simple shapes)
+- [x] Desktop mouse/keyboard input (click → `gui.touch`, ESC → `gui.quit`)
 
 Reference: `.OLD/robotv3/src/services/gui.py`,
 `docs/display-rendering-research.md`
@@ -127,6 +127,14 @@ A simple plugin system for adding capabilities without modifying core code.
 - [ ] Example plugins (greeter, time, weather)
 
 Reference: `.OLD/robotv2/plugins/`, `.OLD/robotv3/src/plugins/`
+
+### Phase 7 — Polish and hardware integration
+
+Follow-up features that refine existing services with Pi-specific hardware
+support and quality-of-life improvements.
+
+- [ ] Pi touchscreen input via evdev (SDL dummy driver ignores input devices)
+- [ ] Audio waveform visualization on the display (GUIService)
 
 ---
 
