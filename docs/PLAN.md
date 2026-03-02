@@ -85,9 +85,9 @@ Reference: `.OLD/robotv3/src/services/gui.py`,
 Microphone capture and speaker playback. Echo cancellation is handled by
 PipeWire at the OS level (already configured on the Pi).
 
-- [ ] AudioService: mic capture → event bus → speaker playback
-- [ ] Hardware detection for ReSpeaker HAT vs laptop mic
-- [ ] Audio format: PCM16, 16 kHz, mono
+- [x] AudioService: mic capture → event bus → speaker playback
+- [x] Hardware detection for ReSpeaker HAT vs laptop mic
+- [x] Audio format: PCM16, 16 kHz mono (mic), 24 kHz mono (playback)
 
 Reference: `.OLD/robotv3/src/services/audio.py`,
 `.OLD/robotv2/services/audio.py`

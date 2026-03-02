@@ -61,7 +61,8 @@ Main thread (asyncio event loop)
 ├── Service.run() coroutines
 │
 └── Worker threads (spawned by services that need them)
-    └── GUIWorker — pygame event loop + rendering
+    ├── GUIWorker — pygame event loop + rendering
+    └── AudioWorker — sounddevice input/output streams
 ```
 
 **Why threads?** Some libraries (pygame, sounddevice) have blocking event
@@ -85,6 +86,11 @@ publications on the main loop. This is used for gui.quit, gui.touch, etc.
 state into a worker thread (e.g. changing the current expression), the
 service stores it in a shared attribute protected by a `threading.Lock`.
 The worker thread reads it on its next iteration.
+
+**3. Queues (bidirectional):** `queue.Queue` is inherently thread-safe and
+works well for streaming data. AudioService uses `_mic_queue` (thread →
+async) and `_speaker_queue` (async → thread) to pass PCM audio bytes
+without locks.
 
 **Lock discipline:** Any attribute accessed by both threads must be read and
 written under the same lock. Group related fields into a single lock
@@ -129,3 +135,47 @@ thread and does not need the lock.
 `_needs_redraw` is True (expression change or blink). When idle it polls at
 10 FPS for event/blink checks; during a blink it runs at the configured FPS
 (default 60).
+
+### AudioService
+
+Microphone capture and speaker playback via sounddevice. Foundation for
+Phase 4 (realtime voice with Gemini Live).
+
+**Events:**
+
+| Direction   | Event                  | Payload                            |
+|-------------|------------------------|------------------------------------|
+| Publishes   | `audio.mic_chunk`      | `{audio: str, sample_rate: int}`   |
+| Subscribes  | `audio.play_chunk`     | `{audio: str, sample_rate: int}`   |
+| Subscribes  | `audio.start_recording`| `{}`                               |
+| Subscribes  | `audio.stop_recording` | `{}`                               |
+| Subscribes  | `audio.stop_playback`  | `{}`                               |
+
+Audio payloads are base64-encoded PCM16 (int16 little-endian). Mic chunks
+are 16 kHz mono, playback chunks are 24 kHz mono (matching Gemini Live).
+
+**Device selection priority:**
+
+| Priority | Device                   | Environment       |
+|----------|--------------------------|-------------------|
+| 1        | `echo_cancel_source`     | Pi (PipeWire AEC) |
+| 2        | `seeed-2mic-voicecard`   | Pi (raw mic)      |
+| 3        | System default input     | Laptop / fallback |
+
+Output always uses system default — on Pi, PipeWire routes to
+`echo_cancel_sink` automatically.
+
+**Threading:** The `AudioWorker` daemon thread opens separate
+`sd.InputStream` (16 kHz, int16) and `sd.OutputStream` (24 kHz, int16)
+with callbacks. Mic data flows through `_mic_queue` to the async `run()`
+loop, which base64-encodes and publishes `audio.mic_chunk`. Playback data
+flows through `_speaker_queue` to the output callback.
+
+**Recording gate:** `recording_enabled` bool toggled by start/stop events.
+Single bool — GIL makes reads/writes atomic. This is belt-and-suspenders on
+top of PipeWire AEC: the RealtimeService (Phase 4) will pause mic capture
+while the model speaks.
+
+**Playback gain:** Applied in `_apply_gain()` when handling `play_chunk`,
+before queueing. Keeps the output callback simple and avoids per-frame
+multiplication.
