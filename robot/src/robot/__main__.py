@@ -69,7 +69,7 @@ class Robot:
             return
 
         self.logger.info(
-            f"Initialization complete." f" {len(enabled)} service(s) enabled."
+            f"Initialization complete. {len(enabled)} service(s) enabled."
         )
 
     async def run(self) -> None:
