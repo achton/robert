@@ -5,6 +5,8 @@ description = "Office robot assistant"
 requires-python = ">=3.13"
 dependencies = [
     "python-dotenv>=1.0.0",
+    "pygame-ce>=2.5.7",
+    "numpy>=1.24.0",
 ]
 
 [dependency-groups]
