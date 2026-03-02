@@ -10,8 +10,9 @@ import sys
 from typing import Any
 
 from robot.base_service import BaseService
-from robot.config import is_raspberry_pi
+from robot.config import GUIConfig, is_raspberry_pi
 from robot.event_bus import EventBus
+from robot.gui_service import GUIService
 from robot.hardware import detect_display
 from robot.logger import get_logger
 
@@ -31,7 +32,9 @@ class Robot:
     def __init__(self) -> None:
         self.logger = get_logger("Robot")
         self.event_bus = EventBus()
-        self.services: list[BaseService] = []
+        self.services: list[BaseService] = [
+            GUIService(self.event_bus, GUIConfig()),
+        ]
 
     async def initialize(self) -> None:
         """Initialize all services and log hardware detection results."""

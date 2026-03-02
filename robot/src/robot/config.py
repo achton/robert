@@ -5,10 +5,22 @@ Base configuration utilities. Service-specific config dataclasses are added
 in their respective phases.
 """
 
+from dataclasses import dataclass
+
 from dotenv import load_dotenv
 
 # Load .env file if it exists (for API keys, secrets, etc.)
 load_dotenv()
+
+
+@dataclass
+class GUIConfig:
+    """Configuration for the GUI service (display and expressions)."""
+
+    width: int = 800
+    height: int = 480
+    fps: int = 60
+    default_expression: str = "neutral"
 
 
 def is_raspberry_pi() -> bool:
