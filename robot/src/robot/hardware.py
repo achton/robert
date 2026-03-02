@@ -6,10 +6,11 @@ Services use these to gracefully disable themselves when required hardware
 is missing.
 """
 
-import logging
 import os
 
-logger = logging.getLogger("Hardware")
+from robot.logger import get_logger
+
+logger = get_logger("Hardware")
 
 
 def detect_audio_device(device_name: str) -> bool:
@@ -32,7 +33,7 @@ def detect_audio_device(device_name: str) -> bool:
                 logger.info(f"Found audio device: {device.get('name')}")
                 return True
 
-        logger.warning(f"Audio device '{device_name}' not found")
+        logger.debug(f"Audio device '{device_name}' not found")
         return False
 
     except Exception as e:
