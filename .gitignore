@@ -1,0 +1,18 @@
+# Legacy code and old experiments
+.OLD/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Environment and secrets
+.env
+*.credentials.json
+
+# OS
+.DS_Store
