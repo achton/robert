@@ -59,5 +59,8 @@ on the laptop, no framebuffer on the desktop).
 - **All changes are coordinated with the user.** Do not make sweeping changes
   without confirmation.
 - **One feature at a time.** Each commit should be a small, focused addition.
-- **Run checks before committing.** Tooling will be defined as we go.
+- **Run `task check` before committing.** This runs format, lint, typecheck,
+  and tests. Use `task fix` to auto-fix formatting and lint issues.
+- **Deploy to Pi with `task pi:deploy`.** Syncs `robot/` via rsync, installs
+  deps with uv. Run on Pi with `task pi:run`.
 - Refer to `docs/PLAN.md` for the implementation roadmap.

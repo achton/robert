@@ -41,13 +41,13 @@ Roberta quickly.
 The `Taskfile.yml` lives at the project root (it covers the whole project).
 The Python venv and `pyproject.toml` live inside `robot/`.
 
-- [ ] `robot/pyproject.toml` with uv, black, ruff, mypy, pytest
-- [ ] `Taskfile.yml` at project root (format, lint, test, run, deploy)
-- [ ] Minimal `robot/` package structure
-- [ ] CI-ready: `task check` runs all quality gates
-- [ ] Pi bootstrap script (idempotent: OS packages, overlays, PipeWire, etc.)
-- [ ] Deploy task (rsync `robot/` to Pi, install deps)
-- [ ] Document the Pi setup in a changelog or similar
+- [x] `robot/pyproject.toml` with uv, black, ruff, mypy, pytest
+- [x] `Taskfile.yml` at project root (format, lint, test, run, deploy)
+- [x] Minimal `robot/` package structure
+- [x] CI-ready: `task check` runs all quality gates
+- [x] Pi bootstrap script (idempotent: OS packages, overlays, PipeWire, etc.)
+- [x] Deploy task (rsync `robot/` to Pi, install deps)
+- [x] Document the Pi setup in a changelog or similar
 
 Reference: `.OLD/robotv3/scripts/bootstrap-pi.sh`,
 `.OLD/robotv3/DEPLOY_CHANGELOG.md`, `.OLD/robotv3/Taskfile.yml`
@@ -57,12 +57,12 @@ Reference: `.OLD/robotv3/scripts/bootstrap-pi.sh`,
 The EventBus, BaseService, configuration, logging, and hardware detection.
 No user-visible features yet, but everything else depends on this.
 
-- [ ] EventBus (async pub/sub)
-- [ ] BaseService (lifecycle: init → run → shutdown)
-- [ ] Configuration (dataclasses, .env for secrets)
-- [ ] Logging (structured, module-level loggers)
-- [ ] Hardware detection (Pi vs laptop, available peripherals)
-- [ ] Main entry point (`robot.py` or `__main__.py`)
+- [x] EventBus (async pub/sub)
+- [x] BaseService (lifecycle: init → run → shutdown)
+- [x] Configuration (dataclasses, .env for secrets)
+- [x] Logging (structured, module-level loggers)
+- [x] Hardware detection (Pi vs laptop, available peripherals)
+- [x] Main entry point (`__main__.py`)
 
 Reference: `.OLD/robotv3/src/common/` (event_bus.py, hardware.py, config.py,
 logger.py), `.OLD/robotv3/src/services/base.py`
