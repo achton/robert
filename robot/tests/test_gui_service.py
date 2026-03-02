@@ -1,5 +1,6 @@
 """Tests for GUIService."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from robot.config import GUIConfig
@@ -132,6 +133,84 @@ class TestHandleSetExpression:
         service = GUIService(bus)
         service._needs_redraw = False
         await service._handle_set_expression({"expression": "confused"})
+        assert service._needs_redraw is False
+
+
+class TestBlink:
+    """Test the auto-blink state machine (_update_blink)."""
+
+    def _make_pygame_stub(self, ticks: int) -> SimpleNamespace:
+        """Create a minimal pygame stub with a controllable clock."""
+        return SimpleNamespace(time=SimpleNamespace(get_ticks=lambda: ticks))
+
+    def test_no_blink_when_not_neutral(self):
+        """Blink should not trigger when expression is not neutral."""
+        bus = EventBus()
+        service = GUIService(bus)
+        service.current_expression = "happy"
+        service._last_blink_ms = 0
+        service._blink_interval_ms = 100
+
+        pg = self._make_pygame_stub(ticks=5000)
+        service._update_blink(pg)
+
+        assert service._is_blinking is False
+
+    def test_blink_triggers_after_interval(self):
+        """Blink should start when interval has elapsed."""
+        bus = EventBus()
+        service = GUIService(bus)
+        service.current_expression = "neutral"
+        service._last_blink_ms = 0
+        service._blink_interval_ms = 3000
+        service._needs_redraw = False
+
+        pg = self._make_pygame_stub(ticks=3000)
+        service._update_blink(pg)
+
+        assert service._is_blinking is True
+        assert service._blink_end_ms == 3200  # 3000 + 200ms
+        assert service._needs_redraw is True
+
+    def test_blink_does_not_trigger_before_interval(self):
+        """Blink should not start before interval has elapsed."""
+        bus = EventBus()
+        service = GUIService(bus)
+        service.current_expression = "neutral"
+        service._last_blink_ms = 0
+        service._blink_interval_ms = 5000
+
+        pg = self._make_pygame_stub(ticks=2000)
+        service._update_blink(pg)
+
+        assert service._is_blinking is False
+
+    def test_blink_ends_after_duration(self):
+        """Blink should end when 200ms have passed."""
+        bus = EventBus()
+        service = GUIService(bus)
+        service._is_blinking = True
+        service._blink_end_ms = 3200
+        service._needs_redraw = False
+
+        pg = self._make_pygame_stub(ticks=3200)
+        service._update_blink(pg)
+
+        assert service._is_blinking is False
+        assert service._needs_redraw is True
+
+    def test_blink_continues_during_duration(self):
+        """Blink should stay active before duration elapses."""
+        bus = EventBus()
+        service = GUIService(bus)
+        service._is_blinking = True
+        service._blink_end_ms = 3200
+        service._needs_redraw = False
+
+        pg = self._make_pygame_stub(ticks=3100)
+        service._update_blink(pg)
+
+        assert service._is_blinking is True
         assert service._needs_redraw is False
 
 

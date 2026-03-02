@@ -2,15 +2,12 @@
 
 import asyncio
 
-import pytest
-
 from robot.event_bus import EventBus
 
 
 class TestEventBus:
     """Test suite for EventBus."""
 
-    @pytest.mark.asyncio
     async def test_subscribe_and_publish(self):
         """Test basic subscribe and publish functionality."""
         bus = EventBus()
@@ -25,7 +22,6 @@ class TestEventBus:
         assert len(received) == 1
         assert received[0]["message"] == "hello"
 
-    @pytest.mark.asyncio
     async def test_unsubscribe(self):
         """Test unsubscribe functionality."""
         bus = EventBus()
@@ -43,7 +39,6 @@ class TestEventBus:
         assert len(received) == 1
         assert received[0]["message"] == "first"
 
-    @pytest.mark.asyncio
     async def test_multiple_subscribers(self):
         """Test multiple subscribers to the same event."""
         bus = EventBus()
@@ -65,13 +60,11 @@ class TestEventBus:
         assert received_a[0]["message"] == "broadcast"
         assert received_b[0]["message"] == "broadcast"
 
-    @pytest.mark.asyncio
     async def test_publish_with_no_subscribers(self):
         """Publishing to an event with no subscribers should not error."""
         bus = EventBus()
         await bus.publish("no.subscribers", {"message": "hello"})
 
-    @pytest.mark.asyncio
     async def test_multiple_events(self):
         """Subscribers only receive their own event type."""
         bus = EventBus()
@@ -95,7 +88,6 @@ class TestEventBus:
         assert received_a[0]["message"] == "A"
         assert received_b[0]["message"] == "B"
 
-    @pytest.mark.asyncio
     async def test_async_dispatch_delivery(self):
         """Async-dispatch mode still delivers events."""
         bus = EventBus()
