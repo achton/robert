@@ -6,6 +6,9 @@ the event bus. Run with: python -m robot
 """
 
 import asyncio
+import contextlib
+import os
+import signal
 import sys
 from typing import Any
 
@@ -133,11 +136,33 @@ async def main() -> None:
     """Main entry point."""
     robot = Robot()
 
+    # Handle SIGTERM (sent by systemd stop) via an asyncio.Event.
+    # Without this, pygame/SDL installs its own SIGTERM handler that
+    # enqueues a pygame event — but on the Pi the event queue is never
+    # polled, so the signal is swallowed and systemd hangs.
+    sigterm_received = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGTERM, sigterm_received.set)
+
     try:
         await robot.initialize()
-        await robot.run()
+
+        # Run services until they stop on their own OR SIGTERM arrives
+        run_task = asyncio.create_task(robot.run())
+        sigterm_task = asyncio.create_task(sigterm_received.wait())
+
+        _done, pending = await asyncio.wait(
+            [run_task, sigterm_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
     except KeyboardInterrupt:
-        print("\nShutdown requested by user")
+        pass
     except Exception as e:
         print(f"Fatal error: {e}")
         import traceback
@@ -150,3 +175,9 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+    # Force-exit to avoid hanging on pygame's atexit handler.
+    # pygame registers pygame.quit() as an atexit callback, and
+    # SDL_Quit() blocks indefinitely on the Pi with the dummy video
+    # driver. Our shutdown() already cleans up everything we need.
+    os._exit(0)
