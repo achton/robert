@@ -19,3 +19,11 @@ Changes made to the Raspberry Pi (roberta.local).
   - Virtual sink: `echo_cancel_sink`
   - Config: `~/.config/pipewire/pipewire.conf.d/echo-cancel.conf`
 - All hardware verified: display, USB speaker, HQ camera (imx477), ReSpeaker HAT
+
+## 2026-03-03
+
+- Installed systemd user service (`~/.config/systemd/user/robot.service`)
+- Service enabled: auto-starts on boot via `default.target`
+- Added `pi` user to `systemd-journal` group (for journal access)
+- Enabled SSH password authentication (`/etc/ssh/sshd_config.d/50-cloud-init.conf`)
+- Reset `pi` user password to default Raspberry Pi OS password
