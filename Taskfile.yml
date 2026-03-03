@@ -107,10 +107,11 @@ tasks:
 
   # === PI TASKS ===
   pi:deploy:
-    desc: "Deploy robot/ to the Raspberry Pi"
+    desc: "Deploy robot/ to the Raspberry Pi and restart the service"
     cmds:
       - task: pi:sync
       - task: pi:install
+      - task: pi:restart
 
   pi:sync:
     desc: "Sync robot/ code to the Pi via rsync"
@@ -135,19 +136,44 @@ tasks:
         && uv sync --no-group dev'
 
   pi:bootstrap:
-    desc: "First-time Pi setup: system packages, uv, audio, overlays"
+    desc: "First-time Pi setup: system packages, uv, audio, overlays, service"
     cmds:
       - echo "Bootstrapping {{.PI_HOST}}..."
       - scp scripts/bootstrap-pi.sh {{.PI_HOST}}:/tmp/bootstrap-pi.sh
       - ssh {{.PI_HOST}} 'chmod +x /tmp/bootstrap-pi.sh && /tmp/bootstrap-pi.sh'
-      - echo "Bootstrap complete. Run 'task pi:deploy' to sync and install."
+      - task: pi:deploy
+      - task: pi:install-service
+      - echo "Bootstrap complete. Service enabled and running."
 
   pi:run:
-    desc: "Run the robot application on the Pi"
+    desc: "Run the robot application on the Pi (interactive, bypasses systemd)"
     cmds:
       - ssh -t {{.PI_HOST}} 'cd {{.PI_APP_DIR}} && .venv/bin/python -m robot'
 
-  pi:logs:
-    desc: "Follow the robot application logs on the Pi"
+  pi:install-service:
+    desc: "Install and enable the systemd user service on the Pi"
     cmds:
-      - ssh -t {{.PI_HOST}} 'journalctl --user -u robot -f 2>/dev/null || echo "No systemd service yet. Use pi:run instead."'
+      - ssh {{.PI_HOST}} 'mkdir -p ~/.config/systemd/user'
+      - scp scripts/robot.service {{.PI_HOST}}:~/.config/systemd/user/robot.service
+      - ssh {{.PI_HOST}} 'systemctl --user daemon-reload && systemctl --user enable robot'
+      - echo "Service installed and enabled. It will start on next boot or 'task pi:restart'."
+
+  pi:restart:
+    desc: "Restart the robot service on the Pi"
+    cmds:
+      - ssh {{.PI_HOST}} 'systemctl --user restart robot'
+
+  pi:stop:
+    desc: "Stop the robot service on the Pi"
+    cmds:
+      - ssh {{.PI_HOST}} 'systemctl --user stop robot'
+
+  pi:status:
+    desc: "Show the robot service status on the Pi"
+    cmds:
+      - ssh -t {{.PI_HOST}} 'systemctl --user status robot'
+
+  pi:logs:
+    desc: "Follow the robot service logs on the Pi"
+    cmds:
+      - ssh -t {{.PI_HOST}} 'journalctl _SYSTEMD_USER_UNIT=robot.service -f'

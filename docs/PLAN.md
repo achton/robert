@@ -45,8 +45,10 @@ The Python venv and `pyproject.toml` live inside `robot/`.
 - [x] `Taskfile.yml` at project root (format, lint, test, run, deploy)
 - [x] Minimal `robot/` package structure
 - [x] CI-ready: `task check` runs all quality gates
+- [x] GitHub Actions CI workflow (`.github/workflows/check.yml`)
 - [x] Pi bootstrap script (idempotent: OS packages, overlays, PipeWire, etc.)
 - [x] Deploy task (rsync `robot/` to Pi, install deps)
+- [x] systemd user service for auto-start on boot (`scripts/robot.service`)
 - [x] Document the Pi setup in a changelog or similar
 
 Reference: `.OLD/robotv3/scripts/bootstrap-pi.sh`,

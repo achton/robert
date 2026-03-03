@@ -1,0 +1,25 @@
+# Roberta — systemd user service
+#
+# Install with:  task pi:install-service
+# Manage with:   task pi:status / pi:restart / pi:stop / pi:logs
+#
+# This is a user-level service (not system-level) because the app needs
+# access to the user's PipeWire audio session. Requires loginctl linger
+# enabled for the pi user (done by bootstrap-pi.sh).
+
+[Unit]
+Description=Roberta robot assistant
+After=pipewire.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/robot
+ExecStart=/home/pi/robot/.venv/bin/python -m robot
+Restart=on-failure
+RestartSec=3
+
+# Headless pygame: use SDL dummy driver + framebuffer
+Environment=SDL_VIDEODRIVER=dummy
+
+[Install]
+WantedBy=default.target

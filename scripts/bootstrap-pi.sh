@@ -134,6 +134,11 @@ echo ""
 echo "--- Preparing app directory ---"
 mkdir -p "$HOME/robot"
 
+# --- Systemd user service directory ---
+echo ""
+echo "--- Preparing systemd user directory ---"
+mkdir -p "$HOME/.config/systemd/user"
+
 echo ""
 echo "=== Bootstrap complete: $(date) ==="
 echo "Next: run 'task pi:deploy' from your laptop to sync code."
