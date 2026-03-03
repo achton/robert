@@ -99,8 +99,8 @@ Reference: `.OLD/robotv3/src/services/audio.py`,
 Connect to a speech-to-speech LLM for live conversation. Gemini Flash Live
 is the primary provider; architecture should allow swapping providers.
 
-- [ ] RealtimeService: WebSocket connection to Gemini Live API
-- [ ] Bidirectional audio streaming (mic → LLM → speaker)
+- [x] RealtimeService: WebSocket connection to Gemini Live API
+- [x] Bidirectional audio streaming (mic → LLM → speaker)
 - [ ] Tool calling support (LLM can trigger events)
 - [ ] Provider abstraction (Gemini now, OpenAI later)
 

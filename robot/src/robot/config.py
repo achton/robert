@@ -5,7 +5,8 @@ Base configuration utilities. Service-specific config dataclasses are added
 in their respective phases.
 """
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
@@ -51,6 +52,44 @@ class AudioConfig:
     def output_chunk_size(self) -> int:
         """Number of samples per speaker chunk (e.g. 960 at 24 kHz / 40 ms)."""
         return int(self.output_sample_rate * self.chunk_duration_ms / 1000)
+
+
+@dataclass
+class RealtimeConfig:
+    """Configuration for the RealtimeService (Gemini Live voice)."""
+
+    # API key — loaded from GEMINI_API_KEY env var. If empty, service
+    # disables itself gracefully.
+    api_key: str = field(
+        default_factory=lambda: os.getenv("GEMINI_API_KEY", "")
+    )
+
+    model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    voice_name: str = "Kore"
+
+    system_instruction: str = (
+        "Du er Roberta, en venlig og hjælpsom kontor-robot. "
+        "Du taler dansk. Hold dine svar korte og naturlige, "
+        "som i en almindelig samtale. Du har en glad og positiv "
+        "personlighed."
+    )
+
+    # Sent as a hidden text message on connect to make the bot speak first.
+    greeting_prompt: str = "Sig hej og præsentér dig selv kort."
+
+    # Sample rates — must match AudioConfig
+    input_sample_rate: int = 16000
+    output_sample_rate: int = 24000
+
+    # Optional Gemini features
+    enable_proactive_audio: bool = True
+    enable_affective_dialog: bool = True
+
+    # VAD (Voice Activity Detection) tuning.
+    # Lower sensitivity = less likely to trigger on background noise.
+    vad_start_sensitivity: str = "START_SENSITIVITY_LOW"
+    vad_end_sensitivity: str = "END_SENSITIVITY_LOW"
+    vad_silence_duration_ms: int = 500
 
 
 def is_raspberry_pi() -> bool:

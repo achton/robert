@@ -14,11 +14,17 @@ from typing import Any
 
 from robot.audio_service import AudioService
 from robot.base_service import BaseService
-from robot.config import AudioConfig, GUIConfig, is_raspberry_pi
+from robot.config import (
+    AudioConfig,
+    GUIConfig,
+    RealtimeConfig,
+    is_raspberry_pi,
+)
 from robot.event_bus import EventBus
 from robot.gui_service import GUIService
 from robot.hardware import detect_display
 from robot.logger import get_logger
+from robot.realtime_service import RealtimeService
 
 
 class Robot:
@@ -41,6 +47,7 @@ class Robot:
         self.services: list[BaseService] = [
             GUIService(self.event_bus, GUIConfig()),
             AudioService(self.event_bus, AudioConfig()),
+            RealtimeService(self.event_bus, RealtimeConfig()),
         ]
 
     async def initialize(self) -> None:
