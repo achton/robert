@@ -179,3 +179,58 @@ while the model speaks.
 **Playback gain:** Applied in `_apply_gain()` when handling `play_chunk`,
 before queueing. Keeps the output callback simple and avoids per-frame
 multiplication.
+
+### RealtimeService
+
+Real-time voice conversation via Google Gemini Live. Connects over WebSocket,
+streams mic audio to the model, and plays back model audio through the speaker.
+
+**Events:**
+
+| Direction   | Event                       | Payload                            |
+|-------------|-----------------------------|------------------------------------|
+| Publishes   | `realtime.connected`        | `{provider: str, model: str}`      |
+| Publishes   | `realtime.disconnected`     | `{provider: str}`                  |
+| Publishes   | `realtime.response_started` | `{}`                               |
+| Publishes   | `realtime.response_completed`| `{}`                              |
+| Publishes   | `realtime.interrupted`      | `{}`                               |
+| Publishes   | `realtime.user_transcript`  | `{text: str}`                      |
+| Publishes   | `realtime.model_transcript` | `{text: str}`                      |
+| Publishes   | `realtime.error`            | `{error: str}`                     |
+| Subscribes  | `audio.mic_chunk`           | `{audio: str, sample_rate: int}`   |
+| Subscribes  | `realtime.inject_text`      | `{text: str}`                      |
+
+**Session lifecycle:**
+
+1. `initialize()` checks for `GEMINI_API_KEY` — disables gracefully if absent.
+2. `run()` connects via `client.aio.live.connect()`, sends a greeting prompt,
+   then enters `_response_loop()`.
+3. `_response_loop()` calls `session.receive()` in an outer `while` loop.
+   Each `receive()` yields messages for one turn and stops at `turn_complete`;
+   the outer loop starts a new `receive()` for the next turn.
+4. `shutdown()` cancels background tasks, closes the session, and unsubscribes.
+
+**Echo cancellation (two layers):**
+
+| Layer    | Mechanism                     | Trade-off                         |
+|----------|-------------------------------|-----------------------------------|
+| Hardware | PipeWire AEC on the Pi        | Best quality, requires Pi config  |
+| Software | Mic paused during model speech| No barge-in while model speaks    |
+
+The software layer (`_pause_mic` / `_resume_mic`) is belt-and-suspenders on
+top of PipeWire AEC. It can be disabled later to test true barge-in.
+
+**Text injection:** Any service can publish `realtime.inject_text` with
+`{text: "..."}` to send context to the model (e.g. face detections, CLI
+testing). A background FIFO reader at `/tmp/roberta.fifo` bridges the CLI:
+`task inject -- "message"` writes to the FIFO, which publishes the event.
+
+**Deferred imports:** `google-genai` is imported inside `run()` to avoid
+`ImportError` in CI / environments without the dependency. The `types` module
+is stored on `self._types` so event handlers can build API objects outside
+`run()`'s scope.
+
+**Transcripts:** User transcripts arrive as complete sentences and are logged
+immediately. Model transcripts arrive word-by-word and are accumulated in
+`_model_transcript_buffer`, then logged and published as a single string at
+`turn_complete`.
