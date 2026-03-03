@@ -157,6 +157,7 @@ class GUIService(BaseService):
                 (self.config.width, self.config.height)
             )
             pygame.display.set_caption("Roberta")
+            pygame.mouse.set_visible(False)
             self._clock = pygame.time.Clock()
 
             # Open framebuffer for Pi headless rendering.
@@ -232,7 +233,18 @@ class GUIService(BaseService):
         except Exception as err:
             self.logger.error(f"Pygame thread error: {err}")
         finally:
+            # Clear the framebuffer to black so the last frame doesn't
+            # linger on the display after the app stops.
             if self._fb:
+                try:
+                    width = self.config.width
+                    height = self.config.height
+                    black = b"\x00\x00" * width * height  # RGB565 black
+                    self._fb.seek(0)
+                    self._fb.write(black)
+                    self._fb.flush()
+                except OSError as err:
+                    self.logger.warning(f"Could not clear framebuffer: {err}")
                 self._fb.close()
                 self._fb = None
             pygame.quit()
