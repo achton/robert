@@ -408,6 +408,115 @@ class TestHandleServerResponse:
         assert published[0] == {"text": "Hej! Hvordan kan jeg hjælpe?"}
 
 
+# ── Text injection ───────────────────────────────────────────────────
+
+
+class TestHandleInjectText:
+    """Test realtime.inject_text event handler."""
+
+    async def test_sends_text_to_session(self):
+        """Injects text as a user message via send_client_content."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service.running = True
+
+        mock_session = AsyncMock()
+        service._session = mock_session
+
+        # Simulate the types module being stored during run()
+        mock_types = SimpleNamespace(
+            Content=lambda role, parts: SimpleNamespace(
+                role=role, parts=parts
+            ),
+            Part=lambda text: SimpleNamespace(text=text),
+        )
+        service._types = mock_types
+
+        await service._handle_inject_text({"text": "Hvad er klokken?"})
+
+        mock_session.send_client_content.assert_called_once()
+        call_kwargs = mock_session.send_client_content.call_args
+        turns = call_kwargs.kwargs["turns"]
+        assert turns.role == "user"
+        assert turns.parts[0].text == "Hvad er klokken?"
+        assert call_kwargs.kwargs["turn_complete"] is True
+
+    async def test_ignores_when_no_session(self):
+        """Does nothing when session is not connected."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service.running = True
+        # _session is None — should return silently
+        await service._handle_inject_text({"text": "hello"})
+
+    async def test_ignores_when_not_running(self):
+        """Does nothing when service is not running."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service._session = AsyncMock()
+        service.running = False
+
+        await service._handle_inject_text({"text": "hello"})
+        service._session.send_client_content.assert_not_called()
+
+    async def test_ignores_empty_text(self):
+        """Does nothing when text is empty or whitespace."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service.running = True
+        service._session = AsyncMock()
+        service._types = SimpleNamespace(
+            Content=lambda **kw: None, Part=lambda **kw: None
+        )
+
+        await service._handle_inject_text({"text": ""})
+        service._session.send_client_content.assert_not_called()
+
+        await service._handle_inject_text({"text": "   "})
+        service._session.send_client_content.assert_not_called()
+
+    async def test_ignores_missing_text(self):
+        """Does nothing when payload has no 'text' key."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service.running = True
+        service._session = AsyncMock()
+
+        await service._handle_inject_text({"other": "data"})
+        service._session.send_client_content.assert_not_called()
+
+    async def test_ignores_non_dict(self):
+        """Does nothing when payload is not a dict."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service.running = True
+        service._session = AsyncMock()
+
+        await service._handle_inject_text("not a dict")
+        service._session.send_client_content.assert_not_called()
+
+    async def test_handles_send_error_gracefully(self):
+        """Logs error but does not crash on send failure."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service.running = True
+
+        mock_session = AsyncMock()
+        mock_session.send_client_content.side_effect = RuntimeError(
+            "connection lost"
+        )
+        service._session = mock_session
+        service._types = SimpleNamespace(
+            Content=lambda role, parts: SimpleNamespace(
+                role=role, parts=parts
+            ),
+            Part=lambda text: SimpleNamespace(text=text),
+        )
+
+        # Should not raise
+        await service._handle_inject_text({"text": "test"})
+
+
 # ── Mic pause/resume ─────────────────────────────────────────────────
 
 
@@ -495,21 +604,28 @@ class TestShutdown:
         assert service.running is False
 
     async def test_unsubscribes_from_events(self):
-        """Shutdown removes the mic_chunk subscription."""
+        """Shutdown removes the mic_chunk and inject_text subscriptions."""
         bus = EventBus()
         service = RealtimeService(bus, RealtimeConfig(api_key="key"))
         service.running = True
 
         # Manually subscribe (normally done in run())
         bus.subscribe("audio.mic_chunk", service._handle_mic_chunk)
+        bus.subscribe("realtime.inject_text", service._handle_inject_text)
         assert service._handle_mic_chunk in bus.subscribers.get(
             "audio.mic_chunk", []
+        )
+        assert service._handle_inject_text in bus.subscribers.get(
+            "realtime.inject_text", []
         )
 
         await service.shutdown()
 
         assert service._handle_mic_chunk not in bus.subscribers.get(
             "audio.mic_chunk", []
+        )
+        assert service._handle_inject_text not in bus.subscribers.get(
+            "realtime.inject_text", []
         )
 
     async def test_resumes_mic_if_paused(self):

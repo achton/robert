@@ -101,6 +101,7 @@ is the primary provider; architecture should allow swapping providers.
 
 - [x] RealtimeService: WebSocket connection to Gemini Live API
 - [x] Bidirectional audio streaming (mic → LLM → speaker)
+- [x] Text injection into session (event bus + FIFO for CLI testing)
 - [ ] Tool calling support (LLM can trigger events)
 - [ ] Provider abstraction (Gemini now, OpenAI later)
 

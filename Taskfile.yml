@@ -19,6 +19,15 @@ tasks:
     cmds:
       - "{{.UV}} run python -m robot"
 
+  inject:
+    desc: "Inject a text message into the running robot conversation"
+    preconditions:
+      - sh: test -p /tmp/roberta.fifo
+        msg: "FIFO /tmp/roberta.fifo not found. Is the robot running?"
+    cmds:
+      - echo "{{.CLI_ARGS}}" > /tmp/roberta.fifo
+      - echo "Injected{{":"}} {{.CLI_ARGS}}"
+
   check:
     desc: "Run all quality gates (format, lint, typecheck, tests)"
     cmds:

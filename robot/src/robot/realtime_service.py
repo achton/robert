@@ -14,7 +14,10 @@ Echo cancellation strategy (two layers):
    this off and relying on AEC alone.
 """
 
+import asyncio
 import base64
+import contextlib
+import os
 from typing import Any
 
 import websockets.exceptions
@@ -22,6 +25,11 @@ import websockets.exceptions
 from robot.base_service import BaseService
 from robot.config import RealtimeConfig
 from robot.event_bus import EventBus
+
+# Named FIFO for injecting text into the conversation from the CLI.
+# Any process can write a line to this file and it will be sent to
+# the Gemini session as a user message.
+FIFO_PATH = "/tmp/roberta.fifo"
 
 
 class RealtimeService(BaseService):
@@ -44,7 +52,8 @@ class RealtimeService(BaseService):
         audio.stop_playback       — Clear speaker queue
 
     Subscribes:
-        audio.mic_chunk — Mic audio from AudioService
+        audio.mic_chunk        — Mic audio from AudioService
+        realtime.inject_text   — Text to inject into the Gemini session
     """
 
     def __init__(
@@ -65,6 +74,14 @@ class RealtimeService(BaseService):
         # Accumulates transcript fragments during a model turn.
         # Logged as a single line when the turn completes.
         self._model_transcript_buffer: list[str] = []
+
+        # Background task that reads from the named FIFO.
+        self._fifo_reader_task: asyncio.Task[None] | None = None
+
+        # Stored reference to google.genai.types — set during run() so
+        # that event handlers (which execute outside run's scope) can
+        # build Content/Part objects for the Gemini API.
+        self._types: Any = None
 
     async def initialize(self) -> None:
         """Check for API key. Disables service if not set."""
@@ -87,8 +104,16 @@ class RealtimeService(BaseService):
         from google import genai
         from google.genai import types
 
+        # Store types module so event handlers can use it outside run().
+        self._types = types
+
         # Subscribe to mic audio from AudioService
         self.event_bus.subscribe("audio.mic_chunk", self._handle_mic_chunk)
+
+        # Subscribe to text injection from any source (CLI, VisionService, etc.)
+        self.event_bus.subscribe(
+            "realtime.inject_text", self._handle_inject_text
+        )
 
         # Build the Gemini client and session config
         client = genai.Client(
@@ -151,6 +176,11 @@ class RealtimeService(BaseService):
                     turn_complete=True,
                 )
 
+                # Start the FIFO reader for CLI text injection
+                self._fifo_reader_task = asyncio.create_task(
+                    self._fifo_reader()
+                )
+
                 # Process responses until the session ends
                 await self._response_loop()
 
@@ -168,16 +198,22 @@ class RealtimeService(BaseService):
     # ------------------------------------------------------------------
 
     async def _response_loop(self) -> None:
-        """Iterate over server messages until the session closes."""
-        async for message in self._session.receive():
-            if not self.running:
-                break
+        """Iterate over server messages until the session closes.
 
-            server_content = message.server_content
-            if server_content is None:
-                continue
+        session.receive() yields messages for a single turn and stops
+        after turn_complete. We wrap it in an outer loop so we keep
+        listening for subsequent turns (user speech, injected text, etc.).
+        """
+        while self.running:
+            async for message in self._session.receive():
+                if not self.running:
+                    break
 
-            await self._handle_server_response(server_content)
+                server_content = message.server_content
+                if server_content is None:
+                    continue
+
+                await self._handle_server_response(server_content)
 
     async def _handle_server_response(self, server_content: Any) -> None:
         """Handle a single server content message from Gemini."""
@@ -303,11 +339,98 @@ class RealtimeService(BaseService):
         await self.event_bus.publish("audio.start_recording", {})
 
     # ------------------------------------------------------------------
+    # Text injection (CLI, VisionService, etc.)
+    # ------------------------------------------------------------------
+
+    async def _handle_inject_text(self, data: Any) -> None:
+        """Inject a text message into the Gemini session.
+
+        Any service can publish to 'realtime.inject_text' with a
+        payload of {"text": "..."} to send context to the model.
+        """
+        if not isinstance(data, dict):
+            return
+
+        text = data.get("text", "").strip()
+        if not text:
+            return
+
+        if self._session is None or not self.running:
+            self.logger.warning(f"Cannot inject (no session): {text}")
+            return
+
+        types = self._types
+        if types is None:
+            return
+
+        try:
+            await self._session.send_client_content(
+                turns=types.Content(
+                    role="user",
+                    parts=[types.Part(text=text)],
+                ),
+                turn_complete=True,
+            )
+            self.logger.info(f"Injected: {text}")
+        except Exception as err:
+            self.logger.error(f"Failed to inject text: {err}")
+
+    # ------------------------------------------------------------------
+    # FIFO reader (CLI text injection)
+    # ------------------------------------------------------------------
+
+    async def _fifo_reader(self) -> None:
+        """Background task: read lines from a named FIFO and publish them.
+
+        Creates /tmp/roberta.fifo if it doesn't exist. Blocks (in a
+        thread) until a line is written, then publishes it as a
+        realtime.inject_text event. Loops until the service stops.
+        """
+        try:
+            if not os.path.exists(FIFO_PATH):
+                os.mkfifo(FIFO_PATH)
+                self.logger.info(f"Created FIFO at {FIFO_PATH}")
+
+            while self.running:
+                # _read_fifo blocks until a writer opens and writes.
+                # Run it in a thread so we don't block the event loop.
+                text = await asyncio.to_thread(self._read_fifo)
+                if text:
+                    await self.event_bus.publish(
+                        "realtime.inject_text", {"text": text}
+                    )
+        except asyncio.CancelledError:
+            pass
+        except Exception as err:
+            self.logger.debug(f"FIFO reader error: {err}")
+        finally:
+            # Clean up the FIFO file
+            with contextlib.suppress(OSError):
+                os.remove(FIFO_PATH)
+
+    @staticmethod
+    def _read_fifo() -> str:
+        """Read a single message from the FIFO (blocking).
+
+        Opens the FIFO, reads everything written, and returns the
+        stripped text. This blocks until a writer opens the other end.
+        """
+        with open(FIFO_PATH) as f:
+            return f.read().strip()
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def shutdown(self) -> None:
         """Close the Gemini session and clean up."""
+        # Cancel the FIFO reader background task
+        if self._fifo_reader_task is not None:
+            self._fifo_reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._fifo_reader_task
+            self._fifo_reader_task = None
+
         # Close the session — this causes _response_loop to exit
         if self._session is not None:
             try:
@@ -318,6 +441,9 @@ class RealtimeService(BaseService):
 
         # Unsubscribe from events
         self.event_bus.unsubscribe("audio.mic_chunk", self._handle_mic_chunk)
+        self.event_bus.unsubscribe(
+            "realtime.inject_text", self._handle_inject_text
+        )
 
         # Belt-and-suspenders: make sure mic is resumed
         if self._mic_paused:
