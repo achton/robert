@@ -102,11 +102,102 @@ is the primary provider; architecture should allow swapping providers.
 - [x] RealtimeService: WebSocket connection to Gemini Live API
 - [x] Bidirectional audio streaming (mic → LLM → speaker)
 - [x] Text injection into session (event bus + FIFO for CLI testing)
-- [ ] Tool calling support (LLM can trigger events)
+- [ ] Session resilience (see Phase 4a below) — do this first
+- [ ] Tool calling support (LLM can trigger events) — requires stable sessions
 - [ ] Provider abstraction (Gemini now, OpenAI later)
 
 Reference: `.OLD/robotv3/src/services/realtime/`,
 `.OLD/robotv2/services/realtime/`
+
+#### Tool calling notes (Gemini Live API)
+
+The Live API supports **function calling** in live sessions. Key details for
+when we implement this:
+
+- Tools are declared in `LiveConnectConfig` via a `tools` array with standard
+  function definitions (name, description, parameters).
+- The model sends `BidiGenerateContentToolCall` messages. Unlike the standard
+  `generateContent` API, **tool responses must be handled manually** — no
+  automatic execution.
+- Send results back via `session.send_tool_response()` with `FunctionResponse`
+  objects.
+- **Async / non-blocking tools**: Set `behavior: "NON_BLOCKING"` on a function
+  definition, then use the `scheduling` parameter in the response:
+  - `INTERRUPT` — report result immediately, interrupting model speech.
+  - `WHEN_IDLE` — wait until the model finishes speaking, then deliver.
+  - `SILENT` — inject knowledge without triggering a spoken response.
+- `SILENT` mode is useful for injecting vision context (camera observations)
+  without interrupting conversation.
+- **Google Search grounding** is also available via `tools: [{'google_search': {}}]`.
+- Multiple tools can be combined in a single session.
+
+Sources:
+- https://ai.google.dev/gemini-api/docs/live-tools
+
+#### Context injection notes
+
+Text injection already works via `send_client_content()`. Additional API
+capabilities for future use:
+
+- Conversation history can be sent as `turns` (list of user/model Content
+  objects) with `turn_complete=False` for incremental context building.
+- For long contexts, the docs recommend sending single-message summaries
+  rather than full conversation history.
+- `send_realtime_input()` is for streaming (responsive); `send_client_content()`
+  is for deterministic ordering (context injection).
+
+Sources:
+- https://ai.google.dev/gemini-api/docs/live-guide
+
+### Phase 4a — Session resilience
+
+Make RealtimeService survive connection drops and long sessions. Without this,
+Roberta goes silent after ~10–15 minutes with no recovery.
+
+**Problem**: WebSocket connections have a ~10 minute lifetime. Audio-only
+sessions max at 15 minutes. The 128k token context window fills up over time.
+Currently, if the connection drops, the service stops entirely.
+
+- [ ] Session resumption (reconnect after WebSocket drop)
+- [ ] Context window compression (sliding window for long sessions)
+- [ ] GoAway message handling (graceful reconnect before forced disconnect)
+- [ ] Token usage tracking (monitor context window pressure)
+
+#### Session resumption
+
+Enable `sessionResumption` in `LiveConnectConfig`. The server sends
+`SessionResumptionUpdate` messages containing a handle. Store the latest
+handle and pass it as `SessionResumptionConfig.handle` when reconnecting.
+Handles are valid for **2 hours** after disconnection.
+
+Implementation approach:
+1. Add `session_resumption` config to `LiveConnectConfig`.
+2. Store the latest resumption handle in `self._resumption_handle`.
+3. On disconnect (non-shutdown), reconnect with the stored handle.
+4. Wrap the session in a reconnection loop with backoff.
+
+#### Context window compression
+
+Enable `contextWindowCompression` in `LiveConnectConfig` with a sliding-window
+approach. Configure a token threshold that triggers compression. This allows
+sessions to run indefinitely.
+
+#### GoAway handling
+
+The server sends a `GoAway` message with `timeLeft` before disconnecting.
+Listen for this and initiate a graceful reconnect (using session resumption)
+before the connection is severed. Also handle `generationComplete` which
+signals the model's response is done before connection loss.
+
+#### Token usage tracking
+
+Monitor `message.usage_metadata` (available on server messages) to track
+`total_token_count` and per-modality breakdowns. Publish as events for
+debugging and the debug overlay (Phase 8).
+
+Sources:
+- https://ai.google.dev/gemini-api/docs/live-session
+- https://ai.google.dev/gemini-api/docs/live-guide
 
 ### Phase 5 — Vision
 
@@ -138,6 +229,25 @@ support and quality-of-life improvements.
 
 - [ ] Pi touchscreen input via evdev (SDL dummy driver ignores input devices)
 - [ ] Audio waveform visualization on the display (GUIService)
+
+### Phase 8 — Debug overlay
+
+A toggleable debug overlay rendered directly on the 7" touchscreen (or pygame
+window on desktop). Streams live session telemetry so we can diagnose issues
+without SSH or log tailing.
+
+- [ ] Debug overlay toggle (touch gesture, key press, or event)
+- [ ] Token usage display (input/output/total from `usage_metadata`)
+- [ ] Thinking summaries (if `include_thoughts=True` is enabled)
+- [ ] Tool call log (function name, args, result, scheduling mode)
+- [ ] Session status (connected/reconnecting, uptime, resumption handle)
+- [ ] Transcript log (scrolling user/model transcript)
+- [ ] VAD state indicator (speaking/listening/paused)
+
+Implementation: GUIService subscribes to debug events published by
+RealtimeService (`realtime.debug_tokens`, `realtime.debug_tool_call`, etc.)
+and renders a semi-transparent overlay on top of the face. Toggled via a
+`gui.toggle_debug` event.
 
 ---
 
