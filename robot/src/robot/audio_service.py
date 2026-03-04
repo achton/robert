@@ -10,8 +10,9 @@ The async run() loop bridges the thread and the event bus.
 
 Platform behaviour:
 - Pi: PipeWire routes capture through WebRTC AEC (echo_cancel_source).
-  Playback goes to echo_cancel_sink automatically. PipeWire resamples
-  from hardware rate to our 16 kHz capture rate.
+  monitor.mode captures the reference signal from the default output,
+  so playback just goes to the system default speaker. PipeWire
+  resamples from hardware rate to our 16 kHz capture rate.
 - Laptop: system default mic and speaker.
 """
 

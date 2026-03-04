@@ -162,8 +162,9 @@ are 16 kHz mono, playback chunks are 24 kHz mono (matching Gemini Live).
 | 2        | `seeed-2mic-voicecard`   | Pi (raw mic)      |
 | 3        | System default input     | Laptop / fallback |
 
-Output always uses system default — on Pi, PipeWire routes to
-`echo_cancel_sink` automatically.
+Output always uses system default — on Pi, PipeWire AEC uses
+`monitor.mode` to capture the reference signal from the default
+output, so no special playback routing is needed.
 
 **Threading:** The `AudioWorker` daemon thread opens separate
 `sd.InputStream` (16 kHz, int16) and `sd.OutputStream` (24 kHz, int16)

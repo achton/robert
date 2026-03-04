@@ -95,39 +95,43 @@ echo "--- Configuring echo cancellation ---"
 mkdir -p "$HOME/.config/pipewire/pipewire.conf.d"
 cat > "$HOME/.config/pipewire/pipewire.conf.d/echo-cancel.conf" << 'AECCONF'
 # Echo cancellation using WebRTC AEC.
-# Creates a virtual source (echo-cancelled mic) and a virtual sink
-# (monitored speaker output) that PipeWire uses to subtract speaker
+# Creates a virtual source (echo-cancelled mic) that subtracts speaker
 # audio from the microphone input.
 #
-# The capture/playback node names are hardware-specific. If you replace
-# the microphone or speaker, update them to match the new device names.
-# List available nodes with:  pw-cli list-objects | grep node.name
+# monitor.mode captures the reference signal from the default output's
+# monitor ports, so AEC works regardless of which sink apps play to.
+#
+# The capture node.target is hardware-specific. If you swap the mic,
+# update it to match. Find node names with:
+#   pw-cli list-objects | grep node.name
 context.modules = [
     {
         name = libpipewire-module-echo-cancel
         args = {
             audio.rate     = 16000
             audio.channels = 1
+            library.name   = "aec/libspa-aec-webrtc"
+            monitor.mode   = true
+            capture.props = {
+                node.target  = "alsa_input.platform-soc_sound.stereo-fallback"
+                node.passive = true
+            }
             source.props = {
                 node.name        = "echo_cancel_source"
                 node.description = "Echo-Cancelled Microphone"
-            }
-            sink.props = {
-                node.name        = "echo_cancel_sink"
-                node.description = "Echo-Cancel Speaker"
-            }
-            library.name   = "aec/libspa-aec-webrtc"
-            capture.props = {
-                node.name = "alsa_input.platform-soc_sound.stereo-fallback"
-            }
-            playback.props = {
-                node.name = "alsa_output.usb-Jieli_Technology_UACDemoV1.0_4150344E37343209-00.analog-stereo"
             }
         }
     }
 ]
 AECCONF
 echo "Echo cancellation configured."
+
+# After first reboot (once PipeWire is running), set echo_cancel_source
+# as the default audio input so the app gets echo-cancelled audio via
+# the "default" ALSA device:
+#
+#   wpctl status               # find the echo_cancel_source node ID
+#   wpctl set-default <ID>     # set it as default (persists across restarts)
 
 # --- App directory ---
 echo ""

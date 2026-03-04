@@ -16,7 +16,7 @@ Changes made to the Raspberry Pi (roberta.local).
 - Enabled user lingering (`loginctl enable-linger pi`)
 - Configured WebRTC echo cancellation (AEC) via PipeWire module
   - Virtual source: `echo_cancel_source`
-  - Virtual sink: `echo_cancel_sink`
+  - Uses `monitor.mode` (captures reference from default output)
   - Config: `~/.config/pipewire/pipewire.conf.d/echo-cancel.conf`
 - All hardware verified: display, USB speaker, HQ camera (imx477), ReSpeaker HAT
 
@@ -27,3 +27,17 @@ Changes made to the Raspberry Pi (roberta.local).
 - Added `pi` user to `systemd-journal` group (for journal access)
 - Enabled SSH password authentication (`/etc/ssh/sshd_config.d/50-cloud-init.conf`)
 - Reset `pi` user password to default Raspberry Pi OS password
+
+## 2026-03-04
+
+- Fixed PipeWire AEC config (`~/.config/pipewire/pipewire.conf.d/echo-cancel.conf`)
+  - Changed `capture.props` from `node.name` to `node.target` (was naming the
+    stream instead of targeting the physical mic)
+  - Added `monitor.mode = true` — captures reference signal from default
+    output's monitor port, no virtual sink needed
+  - Added `node.passive = true` to capture props
+  - Removed `sink.props` and `playback.props` (not needed with monitor mode)
+- Set `echo_cancel_source` as default PipeWire audio source via `wpctl set-default`
+  (persists in WirePlumber state database across restarts)
+- Added `GEMINI_API_KEY` to `/home/pi/robot/.env` (mode 600)
+- Updated `robot.service` with `EnvironmentFile=/home/pi/robot/.env` to load API keys

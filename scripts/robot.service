@@ -21,5 +21,9 @@ RestartSec=3
 # Headless pygame: use SDL dummy driver + framebuffer
 Environment=SDL_VIDEODRIVER=dummy
 
+# API keys and secrets — kept in a separate file outside the repo.
+# Create with:  echo 'GEMINI_API_KEY=...' > /home/pi/robot/.env
+EnvironmentFile=/home/pi/robot/.env
+
 [Install]
 WantedBy=default.target
