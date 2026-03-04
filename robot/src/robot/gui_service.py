@@ -12,6 +12,7 @@ Platform behaviour:
 """
 
 import asyncio
+import math
 import os
 import random
 import threading
@@ -58,8 +59,10 @@ class GUIService(BaseService):
         gui.touch — Mouse click / touch, payload: {x: int, y: int}
 
     Subscribes:
-        gui.set_expression — Change facial expression, payload:
-                             {expression: str}
+        gui.set_expression    — Change facial expression, payload:
+                                {expression: str}
+        audio.start_recording — Mic is active (show listening indicator)
+        audio.stop_recording  — Mic is paused (hide listening indicator)
     """
 
     def __init__(
@@ -89,11 +92,26 @@ class GUIService(BaseService):
         # Cached loaded expression surfaces (populated in worker thread)
         self._expression_images: dict[str, Any] = {}
 
+        # Logo surfaces — loaded in the worker thread.
+        # _logo_boot: large, centered during boot splash.
+        # _logo_corner: small, shown in the lower-right during face mode.
+        self._logo_boot: Any = None
+        self._logo_corner: Any = None
+
+        # Boot mode — True until the first expression change arrives,
+        # which signals that other services are ready and the face
+        # should appear. Protected by _state_lock.
+        self._boot_mode = True
+
         # Blink timing
         self._last_blink_ms = 0
         self._blink_interval_ms = random.randint(3000, 10000)
         self._is_blinking = False
         self._blink_end_ms = 0
+
+        # Listening indicator — True when the mic is active.
+        # Protected by _state_lock (same as expression state).
+        self._is_listening = False
 
         # Dirty flag — only redraw when something changed.
         # Protected by _state_lock (see above).
@@ -121,9 +139,15 @@ class GUIService(BaseService):
         if not self.running:
             return
 
-        # Subscribe to expression change events
+        # Subscribe to events
         self.event_bus.subscribe(
             "gui.set_expression", self._handle_set_expression
+        )
+        self.event_bus.subscribe(
+            "audio.start_recording", self._handle_start_listening
+        )
+        self.event_bus.subscribe(
+            "audio.stop_recording", self._handle_stop_listening
         )
 
         # Start the pygame worker thread, passing the async event loop
@@ -170,8 +194,9 @@ class GUIService(BaseService):
                     self._stop_event.set()
                     return
 
-            # Load all expression images
+            # Load all expression images and logo
             self._load_expressions(pygame)
+            self._load_logo(pygame)
 
             self._last_blink_ms = pygame.time.get_ticks()
             self.logger.info("Pygame initialized")
@@ -208,27 +233,33 @@ class GUIService(BaseService):
                                 {"x": x, "y": y},
                             )
 
-                # Handle auto-blink (may set _needs_redraw)
-                self._update_blink(pygame)
-
-                # Snapshot and reset the dirty flag. The lock
-                # protects against the async event handler writing
-                # current_expression + _needs_redraw concurrently.
+                # Snapshot shared state under the lock.
                 with self._state_lock:
+                    boot_mode = self._boot_mode
                     needs_redraw = self._needs_redraw
+                    is_listening = self._is_listening
                     self._needs_redraw = False
 
-                if needs_redraw:
-                    self._render(pygame)
-
-                # Sleep until next check. During a blink we poll at
-                # the configured FPS for a smooth transition; otherwise
-                # we only need to wake a few times per second to check
-                # for events and blink timing.
-                if self._is_blinking:
+                if boot_mode:
+                    # Boot splash animates every frame
+                    self._render_boot(pygame)
                     self._clock.tick(self.config.fps)
                 else:
-                    self._clock.tick(10)
+                    # Handle auto-blink (may set _needs_redraw)
+                    self._update_blink(pygame)
+
+                    # The listening dot animates every frame, so
+                    # always redraw while the mic is active.
+                    if needs_redraw or is_listening:
+                        self._render(pygame)
+
+                    # During animation (blink or listening pulse) we
+                    # poll at full FPS for smooth motion; otherwise
+                    # just a few times per second.
+                    if self._is_blinking or is_listening:
+                        self._clock.tick(self.config.fps)
+                    else:
+                        self._clock.tick(10)
 
         except Exception as err:
             self.logger.error(f"Pygame thread error: {err}")
@@ -269,6 +300,30 @@ class GUIService(BaseService):
             f"Loaded {len(self._expression_images)} expression images"
         )
 
+    def _load_logo(self, pygame: Any) -> None:
+        """Load the logo PNG and pre-scale for boot splash and corner."""
+        logo_path = ASSETS_DIR / "logo-white.png"
+        if not logo_path.exists():
+            self.logger.warning(f"Logo image missing: {logo_path}")
+            return
+
+        logo = pygame.image.load(str(logo_path)).convert_alpha()
+        orig_w, orig_h = logo.get_size()
+
+        # Boot splash: 400px tall, centered on screen
+        boot_h = 400
+        boot_w = int(orig_w * boot_h / orig_h)
+        self._logo_boot = pygame.transform.smoothscale(logo, (boot_w, boot_h))
+
+        # Corner: 28px tall, fits in the 40px bottom strip
+        corner_h = 28
+        corner_w = int(orig_w * corner_h / orig_h)
+        self._logo_corner = pygame.transform.smoothscale(
+            logo, (corner_w, corner_h)
+        )
+
+        self.logger.info("Loaded logo")
+
     def _update_blink(self, pygame: Any) -> None:
         """Auto-blink: briefly show 'closed' eyes at random intervals."""
         now = pygame.time.get_ticks()
@@ -295,6 +350,29 @@ class GUIService(BaseService):
             self._blink_interval_ms = random.randint(3000, 10000)
             self._needs_redraw = True
 
+    def _render_boot(self, pygame: Any) -> None:
+        """Render the boot splash — large centered logo with gentle pulse."""
+        self._screen.fill((0, 0, 0))
+
+        if self._logo_boot:
+            # Breathing pulse: alpha oscillates 100–255 over ~3 seconds
+            t = pygame.time.get_ticks() / 1000.0
+            alpha = int(178 + 77 * math.sin(t * 2.0 * math.pi / 3.0))
+
+            logo = self._logo_boot.copy()
+            logo.set_alpha(alpha)
+
+            # Center on screen
+            lw, lh = logo.get_size()
+            x = (self.config.width - lw) // 2
+            y = (self.config.height - lh) // 2
+            self._screen.blit(logo, (x, y))
+
+        if self._use_framebuffer:
+            self._blit_to_framebuffer(pygame)
+        else:
+            pygame.display.flip()
+
     def _render(self, pygame: Any) -> None:
         """Render the current expression to the screen/framebuffer."""
         # Clear screen to black
@@ -314,11 +392,43 @@ class GUIService(BaseService):
             # Images are 800x440, placed at y=0 (leaves 40px at bottom)
             self._screen.blit(surface, (0, 0))
 
+        # Bottom strip (y = 440..480): listening dot (center) and logo (right)
+        with self._state_lock:
+            is_listening = self._is_listening
+        if is_listening:
+            self._draw_listening_dot(pygame)
+
+        if self._logo_corner:
+            lw, lh = self._logo_corner.get_size()
+            x = self.config.width - lw - 8  # 8px right padding
+            y = self.config.height - 20 - lh // 2  # vertically centered
+            self._screen.blit(self._logo_corner, (x, y))
+
         # Output the frame
         if self._use_framebuffer:
             self._blit_to_framebuffer(pygame)
         else:
             pygame.display.flip()
+
+    def _draw_listening_dot(self, pygame: Any) -> None:
+        """Draw a gently pulsing muted green dot in the bottom strip."""
+        # Sine-wave brightness pulse: period ~2 seconds, range 0.4–1.0
+        t = pygame.time.get_ticks() / 1000.0
+        brightness = 0.7 + 0.3 * math.sin(t * math.pi)
+
+        # Muted green, scaled by the pulse
+        r = int(60 * brightness)
+        g = int(160 * brightness)
+        b = int(60 * brightness)
+
+        # Centered in the 40px bottom strip (y = 440..480)
+        center_x = self.config.width // 2
+        center_y = self.config.height - 20
+        radius = 8
+
+        pygame.draw.circle(
+            self._screen, (r, g, b), (center_x, center_y), radius
+        )
 
     def _blit_to_framebuffer(self, pygame: Any) -> None:
         """Convert the pygame surface to RGB565 and write to /dev/fb0."""
@@ -361,9 +471,24 @@ class GUIService(BaseService):
             return
 
         with self._state_lock:
+            if self._boot_mode:
+                self._boot_mode = False
+                self.logger.info("Boot splash ended")
             self.current_expression = expression
             self._needs_redraw = True
         self.logger.info(f"Expression set to: {expression}")
+
+    async def _handle_start_listening(self, _data: Any) -> None:
+        """Show listening indicator when mic becomes active."""
+        with self._state_lock:
+            self._is_listening = True
+            self._needs_redraw = True
+
+    async def _handle_stop_listening(self, _data: Any) -> None:
+        """Hide listening indicator when mic is paused."""
+        with self._state_lock:
+            self._is_listening = False
+            self._needs_redraw = True
 
     async def shutdown(self) -> None:
         """Stop the pygame thread and clean up."""
@@ -372,6 +497,12 @@ class GUIService(BaseService):
         # Unsubscribe from events
         self.event_bus.unsubscribe(
             "gui.set_expression", self._handle_set_expression
+        )
+        self.event_bus.unsubscribe(
+            "audio.start_recording", self._handle_start_listening
+        )
+        self.event_bus.unsubscribe(
+            "audio.stop_recording", self._handle_stop_listening
         )
 
         # Wait for the pygame thread to finish
