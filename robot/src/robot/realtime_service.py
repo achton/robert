@@ -50,6 +50,7 @@ class RealtimeService(BaseService):
         audio.start_recording     — Resume mic capture
         audio.stop_recording      — Pause mic capture
         audio.stop_playback       — Clear speaker queue
+        audio.wait_drain          — Wait for speaker to finish playing
 
     Subscribes:
         audio.mic_chunk        — Mic audio from AudioService
@@ -143,6 +144,9 @@ class RealtimeService(BaseService):
                 )
             ),
             enable_affective_dialog=self.config.enable_affective_dialog,
+            proactivity=types.ProactivityConfig(
+                proactive_audio=self.config.enable_proactive_audio,
+            ),
             # Enable transcription so we can log what's being said
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
@@ -287,6 +291,11 @@ class RealtimeService(BaseService):
                         {"text": full_text},
                     )
 
+            # Wait for all queued audio to finish playing before resuming
+            # the mic. Without this, the mic picks up the tail end of
+            # speaker output and Gemini's VAD treats it as user speech.
+            await self.event_bus.publish("audio.wait_drain", {})
+
             await self.event_bus.publish(
                 "gui.set_expression", {"expression": "neutral"}
             )
@@ -424,6 +433,18 @@ class RealtimeService(BaseService):
 
     async def shutdown(self) -> None:
         """Close the Gemini session and clean up."""
+        self.running = False
+
+        # Unblock the FIFO reader thread — it may be stuck on a blocking
+        # open() waiting for a writer. Opening the write end (non-blocking)
+        # satisfies the reader's open(), letting it read "" and exit.
+        if os.path.exists(FIFO_PATH):
+            try:
+                fd = os.open(FIFO_PATH, os.O_WRONLY | os.O_NONBLOCK)
+                os.close(fd)
+            except OSError:
+                pass
+
         # Cancel the FIFO reader background task
         if self._fifo_reader_task is not None:
             self._fifo_reader_task.cancel()

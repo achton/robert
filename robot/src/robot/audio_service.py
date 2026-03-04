@@ -125,6 +125,7 @@ class AudioService(BaseService):
         self.event_bus.subscribe(
             "audio.stop_playback", self._handle_stop_playback
         )
+        self.event_bus.subscribe("audio.wait_drain", self._handle_wait_drain)
 
         # Start the worker thread
         self._audio_thread = threading.Thread(
@@ -284,6 +285,18 @@ class AudioService(BaseService):
         self.recording_enabled = False
         self.logger.info("Recording disabled")
 
+    async def _handle_wait_drain(self, _data: Any) -> None:
+        """Wait until all queued audio has been played through the speaker.
+
+        This blocks the caller (via the event bus) until the speaker queue
+        and playback buffer are both empty. Used by RealtimeService to wait
+        for audio to finish before resuming the mic.
+        """
+        while (
+            not self._speaker_queue.empty() or len(self._playback_buffer) > 0
+        ):
+            await asyncio.sleep(0.05)
+
     async def _handle_stop_playback(self, _data: Any) -> None:
         """Clear playback queue and buffer (for interruptions)."""
         # Drain the queue
@@ -331,6 +344,7 @@ class AudioService(BaseService):
         self.event_bus.unsubscribe(
             "audio.stop_playback", self._handle_stop_playback
         )
+        self.event_bus.unsubscribe("audio.wait_drain", self._handle_wait_drain)
 
         # Wait for the audio thread to finish
         if self._audio_thread and self._audio_thread.is_alive():
