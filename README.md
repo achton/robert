@@ -11,7 +11,7 @@ voice interaction, animated facial expressions, and face recognition.
 | Computer    | Raspberry Pi 4 Model B (4 GB)  |
 | Display     | Official 7" DSI touchscreen    |
 | Camera      | Pi HQ Camera (IMX477)          |
-| Microphone  | ReSpeaker 2-Mic HAT v2.0      |
+| Microphone  | ReSpeaker 2-Mic HAT (WM8960)  |
 | Speaker     | USB speaker                    |
 
 ## Quick start

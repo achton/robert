@@ -386,9 +386,15 @@ class GUIService(BaseService):
             self._screen.blit(surface, (0, 0))
 
         # Bottom strip (y = 440..480): mic level indicator (center) and logo (right)
+        #
+        # The WM8960 HAT mic has a fairly noisy floor (Pi electrical interference
+        # bleeds into the cheap MEMS capsules), and a moderately active office
+        # adds its own ambient thump/rustle. We gate below ~0.12 so incidental
+        # room activity does not light up the indicator — real speech at normal
+        # speaking distance comfortably crosses.
         with self._state_lock:
             mic_level = self._mic_level
-        if mic_level > 0.01:
+        if mic_level > 0.12:
             self._draw_mic_level(pygame, mic_level)
 
         if self._logo_corner:

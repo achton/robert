@@ -41,7 +41,6 @@ class TestAudioConfig:
     def test_preferred_input_devices(self):
         cfg = AudioConfig()
         assert "echo_cancel_source" in cfg.preferred_input_devices
-        assert "seeed-2mic-voicecard" in cfg.preferred_input_devices
 
 
 # ── AudioService init ────────────────────────────────────────────────
@@ -105,23 +104,6 @@ class TestAudioServiceInitialize:
 
         assert service.running is True
         assert service._input_device_name == "echo_cancel_source"
-
-    async def test_falls_back_to_second_preferred(self):
-        """Falls back to seeed-2mic-voicecard if echo_cancel not found."""
-        bus = EventBus()
-        service = AudioService(bus)
-
-        def fake_detect(name):
-            return name == "seeed-2mic-voicecard"
-
-        with patch(
-            "robot.audio_service.detect_audio_device",
-            side_effect=fake_detect,
-        ):
-            await service.initialize()
-
-        assert service.running is True
-        assert service._input_device_name == "seeed-2mic-voicecard"
 
     async def test_falls_back_to_system_default(self):
         """Falls back to system default when no preferred device found."""

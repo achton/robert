@@ -1,6 +1,88 @@
 # Pi Audio Issues — Investigation Notes
 
-Date: 2026-03-04
+Date: 2026-03-04, resolved 2026-04-13.
+
+## Resolution (2026-04-13): wrong codec driver
+
+**Short version:** our HAT is a **Keyestudio KS0314** clone, not a genuine
+Seeed ReSpeaker 2-Mic v2.0. It uses a **Wolfson/Cirrus WM8960** codec (clearly
+printed on the chip in the photos taken of the board), not the
+**TLV320AIC3104** that the v2.0 overlay targets. The original bootstrap
+installed `dtoverlay=respeaker-2mic-v2_0`, which binds the `tlv320aic3x`
+kernel driver at I²C address 0x18 and then hammers register addresses that
+do not exist on a WM8960. Every transfer NAKs with `-EREMOTEIO` (−121) or
+`-EIO` (−5), which is exactly what we saw in `dmesg`, and ALSA returns 0
+bytes / `Input/output error` to userspace. The mic hardware itself is fine.
+
+The fix was a one-line overlay swap plus a mixer tweak:
+
+```text
+/boot/firmware/config.txt:
+-  dtoverlay=respeaker-2mic-v2_0
++  dtoverlay=wm8960-soundcard
+```
+
+`wm8960-soundcard.dtbo` ships with mainline Raspberry Pi OS, so no custom
+overlay build is needed. After reboot, `dmesg` shows a clean `wm8960 1-001a:`
+probe (note the different I²C address — 0x1a vs 0x18), no errors, and
+`arecord`/`pw-record` capture real audio.
+
+Two HAT variants exist and are easy to confuse:
+
+| HAT                              | Codec            | I²C addr | Correct overlay            |
+|----------------------------------|------------------|----------|----------------------------|
+| Seeed ReSpeaker 2-Mic **v1.0**   | WM8960           | 0x1a     | `wm8960-soundcard` *or* `respeaker-2mic-v1_0` |
+| Seeed ReSpeaker 2-Mic **v2.0**   | TLV320AIC3104    | 0x18     | `respeaker-2mic-v2_0`      |
+| Keyestudio KS0314 (our board)    | WM8960           | 0x1a     | `wm8960-soundcard`         |
+| Generic eBay 2-Mic Pi HAT        | almost always WM8960 | 0x1a | `wm8960-soundcard`         |
+
+### Mic mixer config
+
+The stock `wm8960-soundcard` overlay comes up with the onboard mic path
+effectively muted (the `Left/Right Input Mixer Boost Switch` controls
+ADC routing — turning them off disconnects the mic entirely, not just
+−20 dB of preamp as the name suggests). These amixer settings (now in
+`scripts/bootstrap-pi.sh` and persisted with `alsactl store`) give a
+sensible analog gain:
+
+```shell
+amixer -c 1 cset name="Left Input Boost Mixer LINPUT1 Volume" 2   # +20 dB
+amixer -c 1 cset name="Right Input Boost Mixer RINPUT1 Volume" 2
+amixer -c 1 cset name="Left Input Mixer Boost Switch" on          # ADC route
+amixer -c 1 cset name="Right Input Mixer Boost Switch" on
+amixer -c 1 cset name="Left Boost Mixer LINPUT1 Switch" on        # route LINPUT1
+amixer -c 1 cset name="Right Boost Mixer RINPUT1 Switch" on
+amixer -c 1 cset name="Capture Volume" 40                         # ~+11 dB PGA
+amixer -c 1 cset name="ADC PCM Capture Volume" 195                # 0 dB ADC
+sudo alsactl store
+```
+
+Total ≈ +31 dB analog gain. The HAT mics still pick up a fair bit of
+electrical noise from the Pi (USB, camera ribbon, display), so the GUI
+mic indicator is gated at `mic_level > 0.12` to avoid flickering on
+incidental room activity.
+
+### Status of the three original problems, after the fix
+
+| Problem | Status | Notes |
+|---------|--------|-------|
+| Problem 1 — FIFO injection blocked | Fixed earlier | `wait_drain` + partial-buffer discard in `audio_service.py` |
+| Problem 2 — PipeWire AEC breaks PortAudio output | Still present | AEC config now shipped as `.disabled` by bootstrap; retest once we revisit AEC |
+| Problem 3 — "Mic hardware failure" | **Resolved** — never a hardware failure; wrong driver |
+
+### References
+
+- Keyestudio KS0314 wiki: <https://docs.keyestudio.com/projects/KS0314/en/latest/docs/KS0314.html>
+- Seeed ReSpeaker 2-Mic HAT wiki: <https://wiki.seeedstudio.com/ReSpeaker_2_Mics_Pi_HAT_Raspberry/>
+- Seeed DT overlays (for `respeaker-2mic-v1_0` if we want Seeed's mixer defaults baked in): <https://github.com/Seeed-Studio/seeed-linux-dtoverlays>
+- Same symptom reported for a KS0314: <https://github.com/balenalabs/balena-sound/issues/166>
+
+---
+
+## Original investigation notes
+
+The sections below are preserved as-is for historical context and because
+Problem 2 (PipeWire AEC) is still open.
 
 ## Environment
 

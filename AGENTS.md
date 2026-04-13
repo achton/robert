@@ -30,7 +30,7 @@ understandable system is the primary goal.
 | Computer    | Raspberry Pi 4 Model B (4 GB)             |
 | Display     | Official 7" DSI touchscreen (800x480)     |
 | Camera      | Pi High Quality Camera (IMX477)           |
-| Microphone  | ReSpeaker 2-Mic HAT v2.0 (TLV320AIC3104)  |
+| Microphone  | ReSpeaker 2-Mic HAT clone (Keyestudio KS0314, WM8960) |
 | Speaker     | USB speaker (Noname)                      |
 | Chassis     | Wild Thumper 6WD (future project)         |
 

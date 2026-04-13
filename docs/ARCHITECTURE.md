@@ -156,15 +156,19 @@ are 16 kHz mono, playback chunks are 24 kHz mono (matching Gemini Live).
 
 **Device selection priority:**
 
-| Priority | Device                   | Environment       |
-|----------|--------------------------|-------------------|
-| 1        | `echo_cancel_source`     | Pi (PipeWire AEC) |
-| 2        | `seeed-2mic-voicecard`   | Pi (raw mic)      |
-| 3        | System default input     | Laptop / fallback |
+| Priority | Device                   | Environment              |
+|----------|--------------------------|--------------------------|
+| 1        | `echo_cancel_source`     | Pi (future PipeWire AEC) |
+| 2        | System default input     | Pi (WM8960) / laptop     |
 
-Output always uses system default — on Pi, PipeWire AEC uses
-`monitor.mode` to capture the reference signal from the default
-output, so no special playback routing is needed.
+Output always uses system default — on Pi this is PipeWire routing to
+the USB speaker (the WM8960 HAT's line-out is not used). The future
+PipeWire AEC path uses `monitor.mode` to capture the speaker reference
+signal, so no special playback routing is needed.
+
+The PipeWire echo-cancel module is currently shipped *disabled* because
+it breaks PortAudio output callbacks on the Pi 4 — see
+`docs/pi-audio-issues.md`.
 
 **Threading:** The `AudioWorker` daemon thread opens separate
 `sd.InputStream` (16 kHz, int16) and `sd.OutputStream` (24 kHz, int16)

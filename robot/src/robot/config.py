@@ -33,11 +33,12 @@ class AudioConfig:
     channels: int = 1
     chunk_duration_ms: int = 40
 
-    # Devices searched in order during init. Falls back to system default.
-    preferred_input_devices: tuple[str, ...] = (
-        "echo_cancel_source",
-        "seeed-2mic-voicecard",
-    )
+    # Devices searched in order during init. Falls back to system default,
+    # which — on the Pi — is PipeWire routing to the WM8960 sound card.
+    # `echo_cancel_source` stays listed for the future AEC setup; it is
+    # currently disabled because the PipeWire echo-cancel module breaks
+    # PortAudio output on the Pi 4 (see docs/pi-audio-issues.md).
+    preferred_input_devices: tuple[str, ...] = ("echo_cancel_source",)
 
     # Playback gain (0.0–1.0). Slightly below unity to avoid USB speaker
     # clipping, same as robotv3.
