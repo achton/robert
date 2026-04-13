@@ -77,6 +77,10 @@ class RealtimeConfig:
     # Sent as a hidden text message on connect to make the bot speak first.
     greeting_prompt: str = "Sig hej og præsentér dig selv kort."
 
+    # When False, mic audio is NOT forwarded to the Gemini session.
+    # Useful for testing mic hardware without spending API tokens.
+    mic_forwarding_enabled: bool = False
+
     # Sample rates — must match AudioConfig
     input_sample_rate: int = 16000
     output_sample_rate: int = 24000

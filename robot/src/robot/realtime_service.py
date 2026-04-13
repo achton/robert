@@ -93,6 +93,11 @@ class RealtimeService(BaseService):
             self.running = False
             return
 
+        if not self.config.mic_forwarding_enabled:
+            self.logger.info(
+                "Mic forwarding DISABLED — mic audio will not reach Gemini"
+            )
+
         self.running = True
 
     async def run(self) -> None:
@@ -309,6 +314,9 @@ class RealtimeService(BaseService):
 
     async def _handle_mic_chunk(self, data: Any) -> None:
         """Forward mic audio to the Gemini session."""
+        if not self.config.mic_forwarding_enabled:
+            return
+
         if self._session is None or not self.running:
             return
 

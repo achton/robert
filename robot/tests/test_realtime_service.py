@@ -140,7 +140,9 @@ class TestHandleMicChunk:
     async def test_sends_audio_to_session(self):
         """Forwards decoded audio bytes to the Gemini session."""
         bus = EventBus()
-        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service = RealtimeService(
+            bus, RealtimeConfig(api_key="key", mic_forwarding_enabled=True)
+        )
         service.running = True
 
         mock_session = AsyncMock()
