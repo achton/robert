@@ -59,10 +59,10 @@ class GUIService(BaseService):
         gui.touch — Mouse click / touch, payload: {x: int, y: int}
 
     Subscribes:
-        gui.set_expression    — Change facial expression, payload:
-                                {expression: str}
-        audio.start_recording — Mic is active (show listening indicator)
-        audio.stop_recording  — Mic is paused (hide listening indicator)
+        gui.set_expression — Change facial expression, payload:
+                             {expression: str}
+        audio.mic_level    — Mic input level for visual indicator,
+                             payload: {level: float}  (0.0–1.0)
     """
 
     def __init__(
@@ -109,9 +109,10 @@ class GUIService(BaseService):
         self._is_blinking = False
         self._blink_end_ms = 0
 
-        # Listening indicator — True when the mic is active.
-        # Protected by _state_lock (same as expression state).
-        self._is_listening = False
+        # Mic input level (0.0–1.0) from AudioService. Used to drive
+        # the visual level indicator in the bottom strip.
+        # Protected by _state_lock.
+        self._mic_level: float = 0.0
 
         # Dirty flag — only redraw when something changed.
         # Protected by _state_lock (see above).
@@ -143,12 +144,7 @@ class GUIService(BaseService):
         self.event_bus.subscribe(
             "gui.set_expression", self._handle_set_expression
         )
-        self.event_bus.subscribe(
-            "audio.start_recording", self._handle_start_listening
-        )
-        self.event_bus.subscribe(
-            "audio.stop_recording", self._handle_stop_listening
-        )
+        self.event_bus.subscribe("audio.mic_level", self._handle_mic_level)
 
         # Start the pygame worker thread, passing the async event loop
         # so the thread can schedule events back onto it
@@ -237,7 +233,6 @@ class GUIService(BaseService):
                 with self._state_lock:
                     boot_mode = self._boot_mode
                     needs_redraw = self._needs_redraw
-                    is_listening = self._is_listening
                     self._needs_redraw = False
 
                 if boot_mode:
@@ -248,15 +243,13 @@ class GUIService(BaseService):
                     # Handle auto-blink (may set _needs_redraw)
                     self._update_blink(pygame)
 
-                    # The listening dot animates every frame, so
-                    # always redraw while the mic is active.
-                    if needs_redraw or is_listening:
+                    if needs_redraw:
                         self._render(pygame)
 
-                    # During animation (blink or listening pulse) we
-                    # poll at full FPS for smooth motion; otherwise
-                    # just a few times per second.
-                    if self._is_blinking or is_listening:
+                    # During blink animation we need full FPS for
+                    # smooth motion; otherwise 10 Hz is enough (mic
+                    # level events arrive at ~10 Hz).
+                    if self._is_blinking:
                         self._clock.tick(self.config.fps)
                     else:
                         self._clock.tick(10)
@@ -392,11 +385,11 @@ class GUIService(BaseService):
             # Images are 800x440, placed at y=0 (leaves 40px at bottom)
             self._screen.blit(surface, (0, 0))
 
-        # Bottom strip (y = 440..480): listening dot (center) and logo (right)
+        # Bottom strip (y = 440..480): mic level indicator (center) and logo (right)
         with self._state_lock:
-            is_listening = self._is_listening
-        if is_listening:
-            self._draw_listening_dot(pygame)
+            mic_level = self._mic_level
+        if mic_level > 0.01:
+            self._draw_mic_level(pygame, mic_level)
 
         if self._logo_corner:
             lw, lh = self._logo_corner.get_size()
@@ -410,13 +403,21 @@ class GUIService(BaseService):
         else:
             pygame.display.flip()
 
-    def _draw_listening_dot(self, pygame: Any) -> None:
-        """Draw a gently pulsing muted green dot in the bottom strip."""
-        # Sine-wave brightness pulse: period ~2 seconds, range 0.4–1.0
-        t = pygame.time.get_ticks() / 1000.0
-        brightness = 0.7 + 0.3 * math.sin(t * math.pi)
+    def _draw_mic_level(self, pygame: Any, level: float) -> None:
+        """Draw a mic level indicator dot in the bottom strip.
 
-        # Muted green, scaled by the pulse
+        Dot radius and brightness scale with the current mic input level.
+        Useful for debugging whether the mic hardware is picking up sound.
+        """
+        # Radius: 3px at silence → 16px at full level
+        min_radius = 3
+        max_radius = 16
+        radius = int(min_radius + (max_radius - min_radius) * level)
+
+        # Brightness: dim when quiet, bright when loud
+        brightness = 0.3 + 0.7 * level
+
+        # Muted green, scaled by brightness
         r = int(60 * brightness)
         g = int(160 * brightness)
         b = int(60 * brightness)
@@ -424,7 +425,6 @@ class GUIService(BaseService):
         # Centered in the 40px bottom strip (y = 440..480)
         center_x = self.config.width // 2
         center_y = self.config.height - 20
-        radius = 8
 
         pygame.draw.circle(
             self._screen, (r, g, b), (center_x, center_y), radius
@@ -478,17 +478,12 @@ class GUIService(BaseService):
             self._needs_redraw = True
         self.logger.info(f"Expression set to: {expression}")
 
-    async def _handle_start_listening(self, _data: Any) -> None:
-        """Show listening indicator when mic becomes active."""
-        with self._state_lock:
-            self._is_listening = True
-            self._needs_redraw = True
-
-    async def _handle_stop_listening(self, _data: Any) -> None:
-        """Hide listening indicator when mic is paused."""
-        with self._state_lock:
-            self._is_listening = False
-            self._needs_redraw = True
+    async def _handle_mic_level(self, data: Any) -> None:
+        """Update mic level for the visual indicator."""
+        if isinstance(data, dict):
+            with self._state_lock:
+                self._mic_level = data.get("level", 0.0)
+                self._needs_redraw = True
 
     async def shutdown(self) -> None:
         """Stop the pygame thread and clean up."""
@@ -498,12 +493,7 @@ class GUIService(BaseService):
         self.event_bus.unsubscribe(
             "gui.set_expression", self._handle_set_expression
         )
-        self.event_bus.unsubscribe(
-            "audio.start_recording", self._handle_start_listening
-        )
-        self.event_bus.unsubscribe(
-            "audio.stop_recording", self._handle_stop_listening
-        )
+        self.event_bus.unsubscribe("audio.mic_level", self._handle_mic_level)
 
         # Wait for the pygame thread to finish
         if self._gui_thread and self._gui_thread.is_alive():

@@ -9,16 +9,16 @@ Audio I/O runs in a dedicated worker thread (same pattern as GUIService).
 The async run() loop bridges the thread and the event bus.
 
 Platform behaviour:
-- Pi: PipeWire routes capture through WebRTC AEC (echo_cancel_source).
-  monitor.mode captures the reference signal from the default output,
-  so playback just goes to the system default speaker. PipeWire
-  resamples from hardware rate to our 16 kHz capture rate.
+- Pi: PipeWire routes to the system default speaker. Note: the
+  PipeWire echo-cancel module must be disabled — it breaks PortAudio
+  callbacks entirely.
 - Laptop: system default mic and speaker.
 """
 
 import asyncio
 import base64
 import threading
+import time
 from queue import Empty, Queue
 from typing import Any
 
@@ -37,6 +37,8 @@ class AudioService(BaseService):
     Publishes:
         audio.mic_chunk — Base64-encoded PCM16 from mic,
                           payload: {audio: str, sample_rate: int}
+        audio.mic_level — Mic input RMS level at ~10 Hz,
+                          payload: {level: float}  (0.0–1.0)
 
     Subscribes:
         audio.play_chunk    — Base64-encoded PCM16 to play,
@@ -73,6 +75,11 @@ class AudioService(BaseService):
         # stop_playback. The reset (= b"") races with the callback but
         # is safe under GIL (atomic reference swap).
         self._playback_buffer = b""
+
+        # Mic input level (RMS, normalised to 0.0–1.0). Written by the
+        # input callback thread, read by the async loop for publishing.
+        # Single float — GIL makes reads/writes atomic.
+        self.mic_level: float = 0.0
 
         # Threading control
         self._audio_thread: threading.Thread | None = None
@@ -137,7 +144,19 @@ class AudioService(BaseService):
 
         # Drain the mic queue and publish chunks as events.
         # This runs in the async loop so we can use the event bus directly.
+        last_level_time = 0.0
+
         while self.running and not self._stop_event.is_set():
+            # Publish mic level at ~10 Hz for the GUI indicator
+            now = time.monotonic()
+            if now - last_level_time >= 0.1:
+                await self.event_bus.publish(
+                    "audio.mic_level",
+                    {"level": self.mic_level},
+                    async_dispatch=True,
+                )
+                last_level_time = now
+
             try:
                 mic_bytes = self._mic_queue.get_nowait()
             except Empty:
@@ -178,11 +197,18 @@ class AudioService(BaseService):
             if status:
                 self.logger.debug(f"Input status: {status}")
 
+            # Take channel 0 only (mono). indata shape is (frames, channels).
+            mono = indata[:, 0]
+
+            # Always compute RMS for the mic level indicator, even when
+            # not recording. This lets the GUI show whether the mic
+            # hardware is picking up sound at all.
+            rms = np.sqrt(np.mean(mono.astype(np.float32) ** 2))
+            self.mic_level = min(rms / 8000.0, 1.0)
+
             if not self.recording_enabled:
                 return
 
-            # Take channel 0 only (mono). indata shape is (frames, channels).
-            mono = indata[:, 0]
             pcm_bytes = mono.tobytes()
 
             if not self._mic_queue.full():
@@ -219,6 +245,11 @@ class AudioService(BaseService):
             else:
                 # Not enough data — output silence
                 outdata.fill(0)
+                # If the queue is also empty, this is a trailing partial
+                # frame at the end of playback. Discard it so that
+                # wait_drain can detect that playback has finished.
+                if self._speaker_queue.empty():
+                    self._playback_buffer = b""
 
         try:
             input_stream = sd.InputStream(
