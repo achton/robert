@@ -92,6 +92,10 @@ class RealtimeConfig:
     vad_end_sensitivity: str = "END_SENSITIVITY_LOW"
     vad_silence_duration_ms: int = 500
 
+    # Thinking level for Gemini 3.x. Higher = more reasoning, slower
+    # replies. Accepted: "minimal", "low", "medium", "high".
+    thinking_level: str = "medium"
+
 
 @dataclass
 class DashboardConfig:

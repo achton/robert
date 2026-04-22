@@ -140,6 +140,14 @@ class RealtimeService(BaseService):
                     silence_duration_ms=self.config.vad_silence_duration_ms,
                 )
             ),
+            # Thinking effort for Gemini 3.x. The SDK enum is
+            # case-insensitive, but we uppercase so a friendly config
+            # value ("medium") maps cleanly to the enum member (MEDIUM).
+            thinking_config=types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel[
+                    self.config.thinking_level.upper()
+                ],
+            ),
             # Enable transcription so we can log what's being said
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),

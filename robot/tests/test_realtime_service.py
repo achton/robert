@@ -41,6 +41,7 @@ class TestRealtimeConfig:
         assert cfg.vad_start_sensitivity == "START_SENSITIVITY_LOW"
         assert cfg.vad_end_sensitivity == "END_SENSITIVITY_LOW"
         assert cfg.vad_silence_duration_ms == 500
+        assert cfg.thinking_level == "medium"
 
     def test_api_key_from_env(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key-123"}):
