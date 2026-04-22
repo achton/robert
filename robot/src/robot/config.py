@@ -97,6 +97,25 @@ class RealtimeConfig:
     vad_silence_duration_ms: int = 500
 
 
+@dataclass
+class DashboardConfig:
+    """Configuration for the DashboardService (SSE event stream)."""
+
+    # Turn the dashboard off completely by setting ROBOTA_DASHBOARD=0.
+    enabled: bool = field(
+        default_factory=lambda: os.getenv("ROBOTA_DASHBOARD", "1") != "0"
+    )
+
+    # 0.0.0.0 so a laptop on the same LAN can connect; change to
+    # "127.0.0.1" for local-only access.
+    host: str = field(
+        default_factory=lambda: os.getenv("ROBOTA_DASHBOARD_HOST", "0.0.0.0")
+    )
+    port: int = field(
+        default_factory=lambda: int(os.getenv("ROBOTA_DASHBOARD_PORT", "8765"))
+    )
+
+
 def is_raspberry_pi() -> bool:
     """
     Detect if running on a Raspberry Pi.

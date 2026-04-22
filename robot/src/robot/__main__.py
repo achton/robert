@@ -16,10 +16,12 @@ from robot.audio_service import AudioService
 from robot.base_service import BaseService
 from robot.config import (
     AudioConfig,
+    DashboardConfig,
     GUIConfig,
     RealtimeConfig,
     is_raspberry_pi,
 )
+from robot.dashboard import DashboardService
 from robot.event_bus import EventBus
 from robot.gui_service import GUIService
 from robot.hardware import detect_display
@@ -48,6 +50,7 @@ class Robot:
             GUIService(self.event_bus, GUIConfig()),
             AudioService(self.event_bus, AudioConfig()),
             RealtimeService(self.event_bus, RealtimeConfig()),
+            DashboardService(self.event_bus, DashboardConfig()),
         ]
 
     async def initialize(self) -> None:
