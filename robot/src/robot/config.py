@@ -80,7 +80,7 @@ class RealtimeConfig:
 
     # When False, mic audio is NOT forwarded to the Gemini session.
     # Useful for testing mic hardware without spending API tokens.
-    mic_forwarding_enabled: bool = False
+    mic_forwarding_enabled: bool = True
 
     # Sample rates — must match AudioConfig
     input_sample_rate: int = 16000
