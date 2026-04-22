@@ -79,11 +79,6 @@ class RealtimeService(BaseService):
         # Background task that reads from the named FIFO.
         self._fifo_reader_task: asyncio.Task[None] | None = None
 
-        # Stored reference to google.genai.types — set during run() so
-        # that event handlers (which execute outside run's scope) can
-        # build Content/Part objects for the Gemini API.
-        self._types: Any = None
-
     async def initialize(self) -> None:
         """Check for API key. Disables service if not set."""
         if not self.config.api_key:
@@ -109,9 +104,6 @@ class RealtimeService(BaseService):
         # installed (e.g. in CI or on machines without the dependency).
         from google import genai
         from google.genai import types
-
-        # Store types module so event handlers can use it outside run().
-        self._types = types
 
         # Subscribe to mic audio from AudioService
         self.event_bus.subscribe("audio.mic_chunk", self._handle_mic_chunk)
@@ -148,10 +140,6 @@ class RealtimeService(BaseService):
                     silence_duration_ms=self.config.vad_silence_duration_ms,
                 )
             ),
-            enable_affective_dialog=self.config.enable_affective_dialog,
-            proactivity=types.ProactivityConfig(
-                proactive_audio=self.config.enable_proactive_audio,
-            ),
             # Enable transcription so we can log what's being said
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
@@ -176,13 +164,12 @@ class RealtimeService(BaseService):
                 # Start capturing mic audio
                 await self.event_bus.publish("audio.start_recording", {})
 
-                # Send a greeting prompt so the bot speaks first
-                await session.send_client_content(
-                    turns=types.Content(
-                        role="user",
-                        parts=[types.Part(text=self.config.greeting_prompt)],
-                    ),
-                    turn_complete=True,
+                # Send a greeting prompt so the bot speaks first.
+                # gemini-3.1-flash-live-preview requires send_realtime_input
+                # for text once the session is live; send_client_content is
+                # reserved for seeding initial history before connect.
+                await session.send_realtime_input(
+                    text=self.config.greeting_prompt,
                 )
 
                 # Start the FIFO reader for CLI text injection
@@ -376,18 +363,10 @@ class RealtimeService(BaseService):
             self.logger.warning(f"Cannot inject (no session): {text}")
             return
 
-        types = self._types
-        if types is None:
-            return
-
         try:
-            await self._session.send_client_content(
-                turns=types.Content(
-                    role="user",
-                    parts=[types.Part(text=text)],
-                ),
-                turn_complete=True,
-            )
+            # gemini-3.1-flash-live-preview: mid-conversation text must
+            # go through send_realtime_input, not send_client_content.
+            await self._session.send_realtime_input(text=text)
             self.logger.info(f"Injected: {text}")
         except Exception as err:
             self.logger.error(f"Failed to inject text: {err}")
