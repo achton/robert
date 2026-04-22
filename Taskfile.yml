@@ -4,6 +4,9 @@ vars:
   UV: uv
   # Raspberry Pi deployment
   PI_HOST: roberta
+  # Pi LAN IP — used by tools (like the dashboard TUI) that can't read
+  # ~/.ssh/config. Update this if the Pi's IP changes.
+  PI_IP: 192.168.168.67
   PI_APP_DIR: /home/pi/robot
 
 tasks:
@@ -18,6 +21,19 @@ tasks:
     dir: robot
     cmds:
       - "{{.UV}} run python -m robot"
+
+  dashboard:
+    desc: "Open the live Roberta dashboard TUI. Pass 'pi' for the Pi, or a host/IP."
+    cmds:
+      - |
+        ARG="{{.CLI_ARGS}}"
+        case "$ARG" in
+          "")   HOST="localhost" ;;
+          pi)   HOST="{{.PI_IP}}" ;;
+          *)    HOST="$ARG" ;;
+        esac
+        {{.UV}} run --project dashboard-tui python dashboard-tui/main.py \
+          "http://$HOST:8765/events"
 
   inject:
     desc: "Inject a text message into the running robot conversation"
