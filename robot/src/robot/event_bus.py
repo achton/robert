@@ -24,6 +24,11 @@ class EventBus:
         self.subscribers: dict[str, list[Callable[[Any], Coroutine]]] = (
             defaultdict(list)
         )
+        # Wiretaps receive *every* event (type + data). Used for observers
+        # like the dashboard that should not be coupled to specific event
+        # types. Wiretaps must never block the bus: they are dispatched
+        # fire-and-forget and their exceptions are logged, not raised.
+        self._wiretaps: list[Callable[[str, Any], Coroutine]] = []
         self.logger = logging.getLogger("EventBus")
         self._pending_tasks: set[asyncio.Task[Any]] = set()
 
@@ -71,6 +76,23 @@ class EventBus:
         self.subscribers[event_type].append(callback)
         self.logger.debug(f"Subscribed to {event_type}: {callback.__name__}")
 
+    def add_wiretap(self, callback: Callable[[str, Any], Coroutine]) -> None:
+        """
+        Register a callback that receives every published event.
+
+        The callback is invoked as ``callback(event_type, data)``. It is
+        dispatched fire-and-forget; slow or failing wiretaps do not block
+        or crash the bus.
+        """
+        self._wiretaps.append(callback)
+
+    def remove_wiretap(
+        self, callback: Callable[[str, Any], Coroutine]
+    ) -> None:
+        """Remove a previously registered wiretap."""
+        if callback in self._wiretaps:
+            self._wiretaps.remove(callback)
+
     def unsubscribe(
         self, event_type: str, callback: Callable[[Any], Coroutine]
     ) -> None:
@@ -107,6 +129,21 @@ class EventBus:
             data: Optional data to pass to handlers
             async_dispatch: Whether to skip awaiting handler completion
         """
+        # Fan out to wiretaps first, fire-and-forget. Done before the early
+        # return so observers see events even when nothing is subscribed.
+        for tap in self._wiretaps:
+            try:
+                task = asyncio.create_task(tap(event_type, data))
+                self._pending_tasks.add(task)
+                task.add_done_callback(self._pending_tasks.discard)
+            except Exception as exc:  # pragma: no cover - defensive
+                self.logger.error(
+                    "Wiretap %s failed for event %s: %s",
+                    getattr(tap, "__name__", repr(tap)),
+                    event_type,
+                    exc,
+                )
+
         handlers = self.subscribers.get(event_type, [])
 
         if not handlers:
