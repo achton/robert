@@ -65,7 +65,7 @@ class RealtimeConfig:
         default_factory=lambda: os.getenv("GEMINI_API_KEY", "")
     )
 
-    model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    model: str = "gemini-3.1-flash-live-preview"
     voice_name: str = "Kore"
 
     system_instruction: str = (
@@ -86,15 +86,15 @@ class RealtimeConfig:
     input_sample_rate: int = 16000
     output_sample_rate: int = 24000
 
-    # Optional Gemini features
-    enable_proactive_audio: bool = True
-    enable_affective_dialog: bool = True
-
     # VAD (Voice Activity Detection) tuning.
     # Lower sensitivity = less likely to trigger on background noise.
     vad_start_sensitivity: str = "START_SENSITIVITY_LOW"
     vad_end_sensitivity: str = "END_SENSITIVITY_LOW"
     vad_silence_duration_ms: int = 500
+
+    # Thinking level for Gemini 3.x. Higher = more reasoning, slower
+    # replies. Accepted: "minimal", "low", "medium", "high".
+    thinking_level: str = "medium"
 
 
 @dataclass

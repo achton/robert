@@ -34,15 +34,14 @@ class TestRealtimeConfig:
         with patch.dict("os.environ", {}, clear=True):
             cfg = RealtimeConfig()
         assert cfg.api_key == ""
-        assert cfg.model == "gemini-2.5-flash-native-audio-preview-12-2025"
+        assert cfg.model == "gemini-3.1-flash-live-preview"
         assert cfg.voice_name == "Kore"
         assert cfg.input_sample_rate == 16000
         assert cfg.output_sample_rate == 24000
-        assert cfg.enable_proactive_audio is True
-        assert cfg.enable_affective_dialog is True
         assert cfg.vad_start_sensitivity == "START_SENSITIVITY_LOW"
         assert cfg.vad_end_sensitivity == "END_SENSITIVITY_LOW"
         assert cfg.vad_silence_duration_ms == 500
+        assert cfg.thinking_level == "medium"
 
     def test_api_key_from_env(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key-123"}):
@@ -417,7 +416,7 @@ class TestHandleInjectText:
     """Test realtime.inject_text event handler."""
 
     async def test_sends_text_to_session(self):
-        """Injects text as a user message via send_client_content."""
+        """Injects text as a user message via send_realtime_input."""
         bus = EventBus()
         service = RealtimeService(bus, RealtimeConfig(api_key="key"))
         service.running = True
@@ -425,23 +424,11 @@ class TestHandleInjectText:
         mock_session = AsyncMock()
         service._session = mock_session
 
-        # Simulate the types module being stored during run()
-        mock_types = SimpleNamespace(
-            Content=lambda role, parts: SimpleNamespace(
-                role=role, parts=parts
-            ),
-            Part=lambda text: SimpleNamespace(text=text),
-        )
-        service._types = mock_types
-
         await service._handle_inject_text({"text": "Hvad er klokken?"})
 
-        mock_session.send_client_content.assert_called_once()
-        call_kwargs = mock_session.send_client_content.call_args
-        turns = call_kwargs.kwargs["turns"]
-        assert turns.role == "user"
-        assert turns.parts[0].text == "Hvad er klokken?"
-        assert call_kwargs.kwargs["turn_complete"] is True
+        mock_session.send_realtime_input.assert_called_once_with(
+            text="Hvad er klokken?"
+        )
 
     async def test_ignores_when_no_session(self):
         """Does nothing when session is not connected."""
@@ -459,7 +446,7 @@ class TestHandleInjectText:
         service.running = False
 
         await service._handle_inject_text({"text": "hello"})
-        service._session.send_client_content.assert_not_called()
+        service._session.send_realtime_input.assert_not_called()
 
     async def test_ignores_empty_text(self):
         """Does nothing when text is empty or whitespace."""
@@ -467,15 +454,12 @@ class TestHandleInjectText:
         service = RealtimeService(bus, RealtimeConfig(api_key="key"))
         service.running = True
         service._session = AsyncMock()
-        service._types = SimpleNamespace(
-            Content=lambda **kw: None, Part=lambda **kw: None
-        )
 
         await service._handle_inject_text({"text": ""})
-        service._session.send_client_content.assert_not_called()
+        service._session.send_realtime_input.assert_not_called()
 
         await service._handle_inject_text({"text": "   "})
-        service._session.send_client_content.assert_not_called()
+        service._session.send_realtime_input.assert_not_called()
 
     async def test_ignores_missing_text(self):
         """Does nothing when payload has no 'text' key."""
@@ -485,7 +469,7 @@ class TestHandleInjectText:
         service._session = AsyncMock()
 
         await service._handle_inject_text({"other": "data"})
-        service._session.send_client_content.assert_not_called()
+        service._session.send_realtime_input.assert_not_called()
 
     async def test_ignores_non_dict(self):
         """Does nothing when payload is not a dict."""
@@ -495,7 +479,7 @@ class TestHandleInjectText:
         service._session = AsyncMock()
 
         await service._handle_inject_text("not a dict")
-        service._session.send_client_content.assert_not_called()
+        service._session.send_realtime_input.assert_not_called()
 
     async def test_handles_send_error_gracefully(self):
         """Logs error but does not crash on send failure."""
@@ -504,16 +488,10 @@ class TestHandleInjectText:
         service.running = True
 
         mock_session = AsyncMock()
-        mock_session.send_client_content.side_effect = RuntimeError(
+        mock_session.send_realtime_input.side_effect = RuntimeError(
             "connection lost"
         )
         service._session = mock_session
-        service._types = SimpleNamespace(
-            Content=lambda role, parts: SimpleNamespace(
-                role=role, parts=parts
-            ),
-            Part=lambda text: SimpleNamespace(text=text),
-        )
 
         # Should not raise
         await service._handle_inject_text({"text": "test"})
