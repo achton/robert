@@ -158,7 +158,14 @@ Roberta goes silent after ~10–15 minutes with no recovery.
 sessions max at 15 minutes. The 128k token context window fills up over time.
 Currently, if the connection drops, the service stops entirely.
 
-- [ ] Session resumption (reconnect after WebSocket drop)
+- [x] Reconnect with backoff after a dropped or failed connection.
+      Retries with capped exponential backoff instead of stopping the
+      service, so it recovers from network drops, Gemini hiccups, and the
+      stale-clock-at-boot TLS failure (once NTP corrects the clock, the next
+      attempt succeeds). Greets once; context is *not* preserved across
+      reconnects yet — that needs the resumption handle below.
+- [ ] Session resumption handle (preserve context across reconnects via
+      `SessionResumptionUpdate`)
 - [ ] Context window compression (sliding window for long sessions)
 - [ ] GoAway message handling (graceful reconnect before forced disconnect)
 - [ ] Token usage tracking (monitor context window pressure)

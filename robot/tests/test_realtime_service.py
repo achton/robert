@@ -2,7 +2,7 @@
 
 import base64
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from robot.config import RealtimeConfig
 from robot.event_bus import EventBus
@@ -34,8 +34,10 @@ class TestRealtimeConfig:
         with patch.dict("os.environ", {}, clear=True):
             cfg = RealtimeConfig()
         assert cfg.api_key == ""
-        assert cfg.model == "gemini-2.5-flash-native-audio-preview-12-2025"
-        assert cfg.voice_name == "Kore"
+        assert cfg.model == "gemini-2.5-flash-native-audio-latest"
+        assert cfg.voice_name == "Aoede"
+        # Persona is loaded from assets/prompt.md (or the fallback).
+        assert "Roberta" in cfg.system_instruction
         assert cfg.input_sample_rate == 16000
         assert cfg.output_sample_rate == 24000
         assert cfg.enable_proactive_audio is True
@@ -43,6 +45,8 @@ class TestRealtimeConfig:
         assert cfg.vad_start_sensitivity == "START_SENSITIVITY_LOW"
         assert cfg.vad_end_sensitivity == "END_SENSITIVITY_LOW"
         assert cfg.vad_silence_duration_ms == 500
+        assert cfg.reconnect_min_backoff_seconds == 2.0
+        assert cfg.reconnect_max_backoff_seconds == 30.0
 
     def test_api_key_from_env(self):
         with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key-123"}):
@@ -582,6 +586,118 @@ class TestMicPauseResume:
 
         await service._resume_mic()
         assert events == []  # no event — was not paused
+
+
+# ── Reconnect loop ────────────────────────────────────────────────────
+
+
+class _FakeLiveConnect:
+    """Async context manager that mimics client.aio.live.connect(...)."""
+
+    def __init__(self, session):
+        self._session = session
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+def _fake_client(session):
+    """Build a stand-in for genai.Client whose live.connect yields session."""
+    connect = MagicMock(return_value=_FakeLiveConnect(session))
+    return SimpleNamespace(
+        aio=SimpleNamespace(live=SimpleNamespace(connect=connect))
+    )
+
+
+class TestReconnectLoop:
+    """Test that a dropped/failed session is retried instead of stopping."""
+
+    async def test_retries_after_failed_session(self):
+        """A failed connection is retried until shutdown."""
+        bus = EventBus()
+        service = RealtimeService(
+            bus,
+            RealtimeConfig(
+                api_key="key",
+                reconnect_min_backoff_seconds=0.0,
+                reconnect_max_backoff_seconds=0.0,
+            ),
+        )
+        service.running = True
+
+        attempts = {"count": 0}
+
+        async def fake_session(_client, _live_config):
+            attempts["count"] += 1
+            # Stop after the third failed attempt so the loop ends.
+            if attempts["count"] >= 3:
+                service.running = False
+            return False  # never connects
+
+        service._run_session = fake_session
+
+        await service._reconnect_loop(client=None, live_config=None)
+
+        assert attempts["count"] == 3
+
+    async def test_stops_when_shutdown_during_session(self):
+        """No reconnect happens if shutdown was requested mid-session."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service.running = True
+
+        calls = {"count": 0}
+
+        async def fake_session(_client, _live_config):
+            calls["count"] += 1
+            service.running = False  # shutdown requested during the session
+            return True
+
+        service._run_session = fake_session
+
+        await service._reconnect_loop(client=None, live_config=None)
+
+        assert calls["count"] == 1  # ran once, did not reconnect
+
+    async def test_interruptible_sleep_returns_when_not_running(self):
+        """A long backoff wait exits immediately once running is False."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service.running = False
+
+        # Should return promptly despite the large requested duration.
+        await service._interruptible_sleep(100.0)
+
+    async def test_greets_only_on_first_connection(self):
+        """The spoken greeting is sent once, not on every reconnect."""
+        bus = EventBus()
+        service = RealtimeService(bus, RealtimeConfig(api_key="key"))
+        service.running = True
+        service._types = SimpleNamespace(
+            Content=lambda role, parts: SimpleNamespace(
+                role=role, parts=parts
+            ),
+            Part=lambda text: SimpleNamespace(text=text),
+        )
+
+        session = AsyncMock()
+        client = _fake_client(session)
+
+        # Stub the response loop so each session "ends" immediately.
+        service._response_loop = AsyncMock()
+
+        # First session greets.
+        connected = await service._run_session(client, live_config=None)
+        assert connected is True
+        assert service._has_greeted is True
+        assert session.send_client_content.await_count == 1
+
+        # Second session (a reconnect) does not greet again.
+        await service._run_session(client, live_config=None)
+        assert session.send_client_content.await_count == 1
 
 
 # ── Shutdown ──────────────────────────────────────────────────────────

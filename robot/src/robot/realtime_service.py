@@ -25,6 +25,7 @@ import websockets.exceptions
 from robot.base_service import BaseService
 from robot.config import RealtimeConfig
 from robot.event_bus import EventBus
+from robot.speech_gate import SpeechGate
 
 # Named FIFO for injecting text into the conversation from the CLI.
 # Any process can write a line to this file and it will be sent to
@@ -79,6 +80,19 @@ class RealtimeService(BaseService):
         # Background task that reads from the named FIFO.
         self._fifo_reader_task: asyncio.Task[None] | None = None
 
+        # True once we've sent the spoken greeting. We greet on the first
+        # successful connection only, not on every reconnect, so a dropped
+        # connection resumes silently instead of re-introducing herself.
+        self._has_greeted = False
+
+        # Client-side speech gate — forwards only speech to Gemini. Loaded
+        # in initialize(); disables itself (passes all audio) if unavailable.
+        self._speech_gate = SpeechGate(self.config.vad, self.logger)
+
+        # Tracks the gate's speech state so we can flush the audio stream
+        # (audio_stream_end) the moment a speech segment closes.
+        self._gate_was_speaking = False
+
         # Stored reference to google.genai.types — set during run() so
         # that event handlers (which execute outside run's scope) can
         # build Content/Part objects for the Gemini API.
@@ -98,10 +112,18 @@ class RealtimeService(BaseService):
                 "Mic forwarding DISABLED — mic audio will not reach Gemini"
             )
 
+        # Load the speech gate (safe if unavailable — it just passes audio).
+        self._speech_gate.load()
+
         self.running = True
 
     async def run(self) -> None:
-        """Connect to Gemini Live and stream audio bidirectionally."""
+        """Connect to Gemini Live and keep the session alive.
+
+        Sets up the client once, then hands off to a reconnect loop that
+        re-establishes the session whenever it drops or fails, until the
+        service is shut down.
+        """
         if not self.running:
             return
 
@@ -120,6 +142,10 @@ class RealtimeService(BaseService):
         self.event_bus.subscribe(
             "realtime.inject_text", self._handle_inject_text
         )
+
+        # Start the FIFO reader once for the service's lifetime — it spans
+        # reconnects, so it lives here rather than inside a single session.
+        self._fifo_reader_task = asyncio.create_task(self._fifo_reader())
 
         # Build the Gemini client and session config
         client = genai.Client(
@@ -157,13 +183,59 @@ class RealtimeService(BaseService):
             output_audio_transcription=types.AudioTranscriptionConfig(),
         )
 
+        await self._reconnect_loop(client, live_config)
+
+    async def _reconnect_loop(self, client: Any, live_config: Any) -> None:
+        """Run sessions back-to-back, reconnecting until shutdown.
+
+        Each dropped or failed connection is retried with capped exponential
+        backoff instead of stopping the service. The backoff resets after a
+        successful connection so a brief outage doesn't slow later retries.
+        """
+        backoff = self.config.reconnect_min_backoff_seconds
+
+        while self.running:
+            connected = await self._run_session(client, live_config)
+
+            # Shutdown was requested while the session ran — stop cleanly.
+            if not self.running:
+                break
+
+            if connected:
+                backoff = self.config.reconnect_min_backoff_seconds
+
+            self.logger.info(f"Reconnecting to Gemini in {backoff:.0f}s")
+            await self._interruptible_sleep(backoff)
+
+            # Only grow the backoff after a failed attempt, so repeated
+            # failures back off but normal session refreshes stay quick.
+            if not connected:
+                backoff = min(
+                    backoff * 2, self.config.reconnect_max_backoff_seconds
+                )
+
+    async def _run_session(self, client: Any, live_config: Any) -> bool:
+        """Open one Gemini Live session and process it until it ends.
+
+        Returns True if the session connected (used to reset the reconnect
+        backoff), False if the connection attempt failed before a session
+        was established.
+        """
+        types = self._types
+        connected = False
+
         try:
             async with client.aio.live.connect(
                 model=self.config.model,
                 config=live_config,
             ) as session:
                 self._session = session
+                connected = True
                 self.logger.info(f"Connected to {self.config.model}")
+
+                # Fresh audio stream — clear the speech gate's history.
+                self._speech_gate.reset()
+                self._gate_was_speaking = False
 
                 await self.event_bus.publish(
                     "realtime.connected",
@@ -176,19 +248,19 @@ class RealtimeService(BaseService):
                 # Start capturing mic audio
                 await self.event_bus.publish("audio.start_recording", {})
 
-                # Send a greeting prompt so the bot speaks first
-                await session.send_client_content(
-                    turns=types.Content(
-                        role="user",
-                        parts=[types.Part(text=self.config.greeting_prompt)],
-                    ),
-                    turn_complete=True,
-                )
-
-                # Start the FIFO reader for CLI text injection
-                self._fifo_reader_task = asyncio.create_task(
-                    self._fifo_reader()
-                )
+                # Greet only on the first connection — reconnects resume
+                # silently rather than re-introducing herself.
+                if not self._has_greeted:
+                    self._has_greeted = True
+                    await session.send_client_content(
+                        turns=types.Content(
+                            role="user",
+                            parts=[
+                                types.Part(text=self.config.greeting_prompt)
+                            ],
+                        ),
+                        turn_complete=True,
+                    )
 
                 # Process responses until the session ends
                 await self._response_loop()
@@ -200,7 +272,18 @@ class RealtimeService(BaseService):
             await self.event_bus.publish("realtime.error", {"error": str(err)})
         finally:
             self._session = None
-            self.running = False
+            # Don't leave the mic paused if we dropped mid-response.
+            await self._resume_mic()
+
+        return connected
+
+    async def _interruptible_sleep(self, seconds: float) -> None:
+        """Sleep in small steps so shutdown() interrupts the wait promptly."""
+        step = 0.2
+        remaining = seconds
+        while remaining > 0 and self.running:
+            await asyncio.sleep(min(step, remaining))
+            remaining -= step
 
     # ------------------------------------------------------------------
     # Response processing
@@ -326,6 +409,34 @@ class RealtimeService(BaseService):
         audio_b64 = data.get("audio")
         if not audio_b64:
             return
+
+        # Run the speech gate: forward only speech, drop noise/silence.
+        if self._speech_gate.enabled:
+            try:
+                pcm_bytes = base64.b64decode(audio_b64)
+            except Exception:
+                self.logger.warning("mic_chunk: invalid base64")
+                return
+
+            speech_bytes = self._speech_gate.process(pcm_bytes)
+
+            # Log open/close transitions so gating is observable in the logs.
+            # We deliberately do NOT send audio_stream_end here: firing it per
+            # utterance wedged Gemini's audio input after idle periods. The
+            # server VAD ends turns from the trailing silence we forward
+            # during the gate's hangover (see VADConfig.min_silence_ms).
+            speaking = self._speech_gate.is_speaking
+            if speaking != self._gate_was_speaking:
+                self._gate_was_speaking = speaking
+                self.logger.debug(
+                    "SpeechGate: open (speech)"
+                    if speaking
+                    else "SpeechGate: closed (silence)"
+                )
+
+            if not speech_bytes:
+                return
+            audio_b64 = base64.b64encode(speech_bytes).decode("ascii")
 
         try:
             await self._session.send_realtime_input(

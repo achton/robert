@@ -7,11 +7,32 @@ in their respective phases.
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 # Load .env file if it exists (for API keys, secrets, etc.)
 load_dotenv()
+
+# Roberta's persona prompt lives in the shared assets directory as editable
+# markdown, so tweaking her personality doesn't mean editing code.
+PROMPT_PATH = (
+    Path(__file__).resolve().parent.parent.parent / "assets" / "prompt.md"
+)
+
+# Used only if prompt.md is missing, so she still has a sane persona.
+_FALLBACK_SYSTEM_INSTRUCTION = (
+    "Du er Roberta, en venlig kontor-robot. Du taler dansk og holder dine "
+    "svar korte og naturlige."
+)
+
+
+def _load_system_instruction() -> str:
+    """Read Roberta's persona from assets/prompt.md, or fall back."""
+    try:
+        return PROMPT_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return _FALLBACK_SYSTEM_INSTRUCTION
 
 
 @dataclass
@@ -56,6 +77,40 @@ class AudioConfig:
 
 
 @dataclass
+class VADConfig:
+    """Client-side Silero VAD speech gate.
+
+    Runs the Silero VAD model locally so we only forward *speech* to Gemini.
+    Non-speech (HVAC, keyboards, silence) never reaches the model, which
+    otherwise hallucinates transcripts from noise. See
+    docs/voice-gating-research.md.
+    """
+
+    # Master switch. When False, all mic audio is forwarded (old behavior).
+    enabled: bool = True
+
+    # Silero VAD ONNX model file, found in the shared assets directory.
+    model_filename: str = "silero_vad.onnx"
+
+    # Speech probability threshold (0.0–1.0). A window scoring above this
+    # counts as speech. Silero's default is 0.5, but that clipped real
+    # speech in the office; 0.3 is more sensitive (opens more readily).
+    threshold: float = 0.3
+
+    # Continuous silence required before a speech segment is considered
+    # finished (hangover). We keep forwarding audio through this window, so
+    # it must exceed the server VAD's silence_duration_ms (500 ms) for
+    # Gemini to detect end-of-turn from the trailing silence we send. That
+    # is how a turn ends now that we no longer send audio_stream_end.
+    min_silence_ms: int = 700
+
+    # Audio kept from just before speech starts, so word onsets aren't
+    # clipped. Above Silero's 30 ms default; raised to 300 ms after onsets
+    # were still getting clipped in the office.
+    speech_pad_ms: int = 300
+
+
+@dataclass
 class RealtimeConfig:
     """Configuration for the RealtimeService (Gemini Live voice)."""
 
@@ -65,15 +120,10 @@ class RealtimeConfig:
         default_factory=lambda: os.getenv("GEMINI_API_KEY", "")
     )
 
-    model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
-    voice_name: str = "Kore"
+    model: str = "gemini-2.5-flash-native-audio-latest"
+    voice_name: str = "Aoede"
 
-    system_instruction: str = (
-        "Du er Roberta, en venlig og hjælpsom kontor-robot. "
-        "Du taler dansk. Hold dine svar korte og naturlige, "
-        "som i en almindelig samtale. Du har en glad og positiv "
-        "personlighed."
-    )
+    system_instruction: str = field(default_factory=_load_system_instruction)
 
     # Sent as a hidden text message on connect to make the bot speak first.
     greeting_prompt: str = "Sig hej og præsentér dig selv kort."
@@ -95,6 +145,18 @@ class RealtimeConfig:
     vad_start_sensitivity: str = "START_SENSITIVITY_LOW"
     vad_end_sensitivity: str = "END_SENSITIVITY_LOW"
     vad_silence_duration_ms: int = 500
+
+    # Reconnect backoff (seconds). A dropped or failed Gemini connection is
+    # retried instead of stopping the service. The wait grows from min to
+    # max on repeated failures and resets after a successful connection.
+    # This also recovers from the stale-clock TLS failure at boot: once NTP
+    # corrects the clock, the next connection attempt's handshake succeeds.
+    reconnect_min_backoff_seconds: float = 2.0
+    reconnect_max_backoff_seconds: float = 30.0
+
+    # Client-side speech gate (Silero VAD). Keeps automatic server VAD on
+    # as a backstop; we simply don't forward non-speech audio.
+    vad: VADConfig = field(default_factory=VADConfig)
 
 
 @dataclass
