@@ -14,8 +14,9 @@ __pycache__/
 .env
 *.credentials.json
 
-# Claude Code
-.claude/
+# Claude Code — ignore local settings, but track shared project skills
+.claude/*
+!.claude/skills/
 
 # OS
 .DS_Store
