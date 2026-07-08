@@ -134,6 +134,18 @@ when we implement this:
 Sources:
 - https://ai.google.dev/gemini-api/docs/live-tools
 
+#### Suggested first tool: `get_current_time`
+
+A good first tool to prove out the tool-calling flow. It returns the exact
+current local time from the OS (`datetime.now().astimezone()`, timezone
+Europe/Copenhagen, DST-aware) whenever the model asks.
+
+This would supersede the connect-time injection now in
+`RealtimeService._build_live_config()`: that injection is only accurate at
+connect and drifts as the session runs, whereas a tool gives the exact time on
+demand with no drift. Once the tool works, the connect-time injection can stay
+as a lightweight fallback or be dropped.
+
 #### Context injection notes
 
 Text injection already works via `send_client_content()`. Additional API
