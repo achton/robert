@@ -105,9 +105,41 @@ is the primary provider; architecture should allow swapping providers.
 - [ ] Session resilience (see Phase 4a below) — do this first
 - [ ] Tool calling support (LLM can trigger events) — requires stable sessions
 - [ ] Provider abstraction (Gemini now, OpenAI later)
+- [ ] Model migration: `gemini-2.5-flash-native-audio-*` →
+      `gemini-3.1-flash-live-preview` (deprecation path; see notes below)
 
 Reference: `.OLD/robotv3/src/services/realtime/`,
 `.OLD/robotv2/services/realtime/`
+
+#### Model migration: 2.5 native-audio → 3.1 flash-live (deferred)
+
+`gemini-2.5-flash-native-audio-*` (we run `-latest`) is on Gemini's deprecation
+path; the successor for realtime voice is `gemini-3.1-flash-live-preview`. As of
+2026-07-08 the current model still connects and works, so there is no emergency
+— but plan the move.
+
+The `google-genai` 1.x → 2.x SDK bump is a **non-event** on its own: 2.0's
+breaking changes are all in the new (turn-based) Interactions API, while the
+Live API surface `RealtimeService` uses is unchanged. So bump the SDK to 2.x
+only as a free ride-along **with** this model migration, not before.
+
+Migration steps (in `realtime_service.py` / `config.py`):
+
+- Switch the model to `gemini-3.1-flash-live-preview`.
+- Remove `enable_affective_dialog` and `proactivity` / `proactive_audio` — not
+  supported on 3.1 flash-live. Expect a shift in conversational "feel" (these
+  shaped the persona's expressiveness); re-check the persona with a listen
+  test, and re-evaluate whether the `v1alpha` channel is still needed once
+  those alpha features are gone.
+- Move the greeting and text injection from `send_client_content(...)` to
+  `send_realtime_input(text=...)`; on 3.1, `send_client_content` is only for
+  seeding initial history.
+- Re-verify the client VAD interplay and server VAD tuning behave the same.
+- Then bump `google-genai` to 2.x, `task check`, deploy, and live-test the full
+  loop (connect, greeting, mic → reply, interruption, turn_complete).
+
+Sources: `.claude/skills/gemini-live-api-dev/SKILL.md`;
+https://ai.google.dev/gemini-api/docs/interactions-overview
 
 #### Tool calling notes (Gemini Live API)
 
