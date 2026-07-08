@@ -84,3 +84,17 @@ Changes made to the Raspberry Pi (roberta.local).
   (timezone Europe/Copenhagen, DST-aware) is read at each connection and
   injected into the session's system instruction, plus a prompt rule to use
   local time and never UTC. Verified: she reported 13:02 CEST, not 11:02 UTC.
+
+## 2026-07-08
+
+- Enabled `unattended-upgrades` for the OS: daily, Debian stable + security
+  origins, auto-reboot disabled. (App Python deps are git-managed via uv.lock,
+  so they are deliberately NOT auto-upgraded on the Pi.)
+- One-time full OS upgrade: `apt full-upgrade` (~141 packages, incl. kernel
+  6.12 to 6.18 and WiFi/BT firmware), `rpi-eeprom-update -a` (bootloader
+  2025-11 to 2026-05), autoremove. Rebooted to apply.
+- Upgraded app dependencies (`uv lock --upgrade`; google-genai held at 1.x
+  pending the 2.x migration) and deployed to the Pi.
+- Post-reboot verification: the NTP-sync gate held startup ~44s until the clock
+  synced, then the bot connected, greeted, and answered a voice query in local
+  Danish time. Kernel 6.18.34, EEPROM up to date.
