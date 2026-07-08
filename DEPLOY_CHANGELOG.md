@@ -74,3 +74,9 @@ Changes made to the Raspberry Pi (roberta.local).
 - Switched the Gemini model to `gemini-2.5-flash-native-audio-latest` (rolling
   alias to the newest 2.5 native-audio) from the 12-2025 preview snapshot.
 - Set the voice to `Aoede` (from `Kore`).
+- Added an NTP-sync startup gate to `robot.service` (`ExecStartPre` waits up to
+  90s for `timedatectl` to report the clock synced, else fails and lets
+  `Restart=on-failure` retry). The app no longer starts with the Pi's stale
+  cold-boot clock, which had caused the stuck-on-logo TLS error and a
+  mid-session wedge when NTP later stepped the clock forward. Installed via
+  `task pi:install-service`.
