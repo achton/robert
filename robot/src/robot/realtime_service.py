@@ -18,6 +18,7 @@ import asyncio
 import base64
 import contextlib
 import os
+from datetime import datetime
 from typing import Any
 
 import websockets.exceptions
@@ -147,15 +148,36 @@ class RealtimeService(BaseService):
         # reconnects, so it lives here rather than inside a single session.
         self._fifo_reader_task = asyncio.create_task(self._fifo_reader())
 
-        # Build the Gemini client and session config
+        # Build the Gemini client. The per-session config is (re)built on each
+        # connection in _run_session so every session gets the current time.
         client = genai.Client(
             api_key=self.config.api_key,
             http_options={"api_version": "v1alpha"},
         )
 
-        live_config = types.LiveConnectConfig(
+        await self._reconnect_loop(client)
+
+    def _build_live_config(self) -> Any:
+        """Build the Gemini session config for one connection.
+
+        The current local time is read from the OS (which knows the timezone
+        and handles DST) and appended to the system instruction, so Roberta
+        can answer time and date questions in correct local time. Rebuilt per
+        connection so a reconnect refreshes the reference time.
+        """
+        types = self._types
+
+        now = datetime.now().astimezone()
+        time_note = (
+            "\n\nAktuel lokal tid ved denne forbindelse: "
+            + now.strftime("%A %d %B %Y %H:%M %Z (UTC%z)")
+            + ". Tidszonen er Europe/Copenhagen. Brug dette som kilde til"
+            + " klokkeslæt og dato, og oplys altid tider i lokal dansk tid."
+        )
+
+        return types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
-            system_instruction=self.config.system_instruction,
+            system_instruction=self.config.system_instruction + time_note,
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -183,9 +205,7 @@ class RealtimeService(BaseService):
             output_audio_transcription=types.AudioTranscriptionConfig(),
         )
 
-        await self._reconnect_loop(client, live_config)
-
-    async def _reconnect_loop(self, client: Any, live_config: Any) -> None:
+    async def _reconnect_loop(self, client: Any) -> None:
         """Run sessions back-to-back, reconnecting until shutdown.
 
         Each dropped or failed connection is retried with capped exponential
@@ -195,7 +215,7 @@ class RealtimeService(BaseService):
         backoff = self.config.reconnect_min_backoff_seconds
 
         while self.running:
-            connected = await self._run_session(client, live_config)
+            connected = await self._run_session(client)
 
             # Shutdown was requested while the session ran — stop cleanly.
             if not self.running:
@@ -214,7 +234,7 @@ class RealtimeService(BaseService):
                     backoff * 2, self.config.reconnect_max_backoff_seconds
                 )
 
-    async def _run_session(self, client: Any, live_config: Any) -> bool:
+    async def _run_session(self, client: Any) -> bool:
         """Open one Gemini Live session and process it until it ends.
 
         Returns True if the session connected (used to reset the reconnect
@@ -227,7 +247,7 @@ class RealtimeService(BaseService):
         try:
             async with client.aio.live.connect(
                 model=self.config.model,
-                config=live_config,
+                config=self._build_live_config(),
             ) as session:
                 self._session = session
                 connected = True

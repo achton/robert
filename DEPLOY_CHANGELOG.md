@@ -80,3 +80,7 @@ Changes made to the Raspberry Pi (roberta.local).
   cold-boot clock, which had caused the stuck-on-logo TLS error and a
   mid-session wedge when NTP later stepped the clock forward. Installed via
   `task pi:install-service`.
+- Roberta now answers time and date in local Danish time. The OS local time
+  (timezone Europe/Copenhagen, DST-aware) is read at each connection and
+  injected into the session's system instruction, plus a prompt rule to use
+  local time and never UTC. Verified: she reported 13:02 CEST, not 11:02 UTC.

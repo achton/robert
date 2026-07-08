@@ -630,7 +630,7 @@ class TestReconnectLoop:
 
         attempts = {"count": 0}
 
-        async def fake_session(_client, _live_config):
+        async def fake_session(_client):
             attempts["count"] += 1
             # Stop after the third failed attempt so the loop ends.
             if attempts["count"] >= 3:
@@ -639,7 +639,7 @@ class TestReconnectLoop:
 
         service._run_session = fake_session
 
-        await service._reconnect_loop(client=None, live_config=None)
+        await service._reconnect_loop(client=None)
 
         assert attempts["count"] == 3
 
@@ -651,14 +651,14 @@ class TestReconnectLoop:
 
         calls = {"count": 0}
 
-        async def fake_session(_client, _live_config):
+        async def fake_session(_client):
             calls["count"] += 1
             service.running = False  # shutdown requested during the session
             return True
 
         service._run_session = fake_session
 
-        await service._reconnect_loop(client=None, live_config=None)
+        await service._reconnect_loop(client=None)
 
         assert calls["count"] == 1  # ran once, did not reconnect
 
@@ -686,17 +686,19 @@ class TestReconnectLoop:
         session = AsyncMock()
         client = _fake_client(session)
 
-        # Stub the response loop so each session "ends" immediately.
+        # Stub the response loop and the config build (which needs the real
+        # google types) so we can drive _run_session directly.
         service._response_loop = AsyncMock()
+        service._build_live_config = lambda: None
 
         # First session greets.
-        connected = await service._run_session(client, live_config=None)
+        connected = await service._run_session(client)
         assert connected is True
         assert service._has_greeted is True
         assert session.send_client_content.await_count == 1
 
         # Second session (a reconnect) does not greet again.
-        await service._run_session(client, live_config=None)
+        await service._run_session(client)
         assert session.send_client_content.await_count == 1
 
 
