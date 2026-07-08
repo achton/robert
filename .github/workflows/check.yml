@@ -1,0 +1,77 @@
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        working-directory: robot
+        run: uv sync
+
+      - name: Validate pyproject.toml
+        working-directory: robot
+        run: uv run validate-pyproject pyproject.toml
+
+      - name: Check formatting (black)
+        working-directory: robot
+        run: uv run black --check .
+
+      - name: Lint (ruff)
+        working-directory: robot
+        run: uv run ruff check .
+
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        working-directory: robot
+        run: uv sync
+
+      - name: Type check (mypy)
+        working-directory: robot
+        run: uv run mypy src
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
+            libportaudio2
+
+      - name: Install dependencies
+        working-directory: robot
+        run: uv sync
+
+      - name: Test (pytest)
+        working-directory: robot
+        run: uv run pytest -q

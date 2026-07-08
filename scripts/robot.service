@@ -1,0 +1,39 @@
+# Roberta — systemd user service
+#
+# Install with:  task pi:install-service
+# Manage with:   task pi:status / pi:restart / pi:stop / pi:logs
+#
+# This is a user-level service (not system-level) because the app needs
+# access to the user's PipeWire audio session. Requires loginctl linger
+# enabled for the pi user (done by bootstrap-pi.sh).
+
+[Unit]
+Description=Roberta robot assistant
+After=pipewire.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/robot
+
+# Do not start until the system clock is NTP-synced. The Pi 4 has no RTC, so on
+# a cold boot it comes up with a stale saved clock. Starting then makes the TLS
+# handshake fail ("certificate is not yet valid"), and the later NTP step (which
+# can jump the clock by days) silently wedges the live Gemini session. We wait
+# up to 90s for sync; if it never syncs (e.g. no network) the unit fails and
+# Restart=on-failure keeps retrying, so the app simply does not start until the
+# clock is correct. ($$ is an escaped $ — systemd would otherwise expand it.)
+ExecStartPre=/usr/bin/bash -c 'echo "robot.service: waiting for NTP clock sync..."; for i in {1..90}; do [ "$$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ] && { echo "robot.service: clock synced."; exit 0; }; sleep 1; done; echo "robot.service: clock NOT synced after 90s, refusing to start."; exit 1'
+
+ExecStart=/home/pi/robot/.venv/bin/python -m robot
+Restart=on-failure
+RestartSec=3
+
+# Headless pygame: use SDL dummy driver + framebuffer
+Environment=SDL_VIDEODRIVER=dummy
+
+# API keys and secrets — kept in a separate file outside the repo.
+# Create with:  echo 'GEMINI_API_KEY=...' > /home/pi/robot/.env
+EnvironmentFile=/home/pi/robot/.env
+
+[Install]
+WantedBy=default.target
